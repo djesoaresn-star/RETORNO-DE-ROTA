@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, Send, X, Sparkles, Bot, User, CornerDownLeft } from 'lucide-react';
+import { AppStore } from '../store';
+import { isClientFirebaseActive } from '../clientFirebase';
+import { GoogleGenAI } from '@google/genai';
 
 interface ChatMessage {
   id: string;
@@ -50,6 +53,148 @@ export default function AIAgentChat() {
     setMessages(newMessages);
     setInputText('');
     setIsLoading(true);
+
+    if (isClientFirebaseActive()) {
+      try {
+        console.log("[ClientFirebase] Usando Gemini diretamente no cliente para o chat...");
+        const apiKey = (process.env.GEMINI_API_KEY) || 
+                       ((import.meta as any).env?.VITE_GEMINI_API_KEY) || 
+                       localStorage.getItem('logiroute_gemini_api_key') ||
+                       undefined;
+
+        if (!apiKey) {
+          throw new Error("Chave API não configurada. Configure a chave GEMINI_API_KEY no painel de Configurações > Secrets ou na build.");
+        }
+
+        const ai = new GoogleGenAI({ apiKey });
+
+        let activeDatabaseContext = "Nenhum dado ativo no momento.";
+        try {
+          const routes = AppStore.getImportedRoutes() || [];
+          const audits = AppStore.getAudits() || [];
+          const vales = AppStore.getVales() || [];
+          const drivers = AppStore.getDrivers() || [];
+
+          const openRoutes = routes.filter((r: any) => r.status !== 'fechado');
+          const closedRoutes = routes.filter((r: any) => r.status === 'fechado');
+
+          const valesPendentes = vales.filter((v: any) => v.status === 'PENDENTE_ASSINATURA');
+          const valesAssinados = vales.filter((v: any) => v.status === 'ASSINADO');
+          const valesCompensados = vales.filter((v: any) => v.status === 'COMPENSADO');
+
+          activeDatabaseContext = `
+DADOS ATIVOS EM TEMPO REAL DA UNIDADE:
+- Rotas Importadas Totais: ${routes.length} (Abertas: ${openRoutes.length}, Fechadas: ${closedRoutes.length})
+- Rotas em Aberto no momento: ${openRoutes.map((r: any) => `Mapa ${r.routeMap} (Placa ${r.plate}, Status ${r.status})`).join(', ') || 'Nenhuma'}
+- Auditorias com Divergência Registradas: ${audits.filter((a: any) => a.status === 'finalizado_divergente').length}
+- Vales de Colaboradores: Total de ${vales.length} vales.
+  * Pendentes de assinatura: ${valesPendentes.length} vales (Total R$ ${valesPendentes.reduce((acc: number, curr: any) => acc + (curr.valor || 0), 0).toFixed(2)})
+  * Assinados: ${valesAssinados.length} vales (Total R$ ${valesAssinados.reduce((acc: number, curr: any) => acc + (curr.valor || 0), 0).toFixed(2)})
+  * Compensados/Descontados: ${valesCompensados.length} vales
+
+Detalhes de Auditorias Ativas com Divergências de Sobras/Faltas de PA (Produto Acabado) e AG (Ativo de Giro):
+${audits.map((a: any) => {
+  const driverName = drivers.find((d: any) => d.id === a.driverId)?.name || 'Desconhecido';
+  const surplusPA = a.items.filter((i: any) => (i.rePhysicalQty ?? i.physicalQty) > (i.fiscalQty ?? 0));
+  const deficitPA = a.items.filter((i: any) => (i.rePhysicalQty ?? i.physicalQty) < (i.fiscalQty ?? 0));
+  const surplusAG = a.assets.filter((as: any) => (as.rePhysicalQty ?? as.physicalQty) > (as.fiscalQty ?? 0));
+  const deficitAG = a.assets.filter((as: any) => (as.rePhysicalQty ?? as.physicalQty) < (as.fiscalQty ?? 0));
+
+  let info = `* Mapa ${a.routeMap} (Placa: ${a.plate}, Motorista: ${driverName}, Status Geral: ${a.status}):\n`;
+  if (surplusPA.length > 0) {
+    info += `  - Sobras de PA (Produto Acabado): ${surplusPA.map((i: any) => `${i.productDescription} (+${(i.rePhysicalQty ?? i.physicalQty) - (i.fiscalQty ?? 0)} un)`).join(', ')}\n`;
+  }
+  if (deficitPA.length > 0) {
+    info += `  - Faltas de PA (Produto Acabado): ${deficitPA.map((i: any) => `${i.productDescription} (-${(i.fiscalQty ?? 0) - (i.rePhysicalQty ?? i.physicalQty)} un)`).join(', ')}\n`;
+  }
+  if (surplusAG.length > 0) {
+    info += `  - Sobras de AG (Ativo de Giro): ${surplusAG.map((as: any) => `${as.assetName} (+${(as.rePhysicalQty ?? as.physicalQty) - (as.fiscalQty ?? 0)} un)`).join(', ')}\n`;
+  }
+  if (deficitAG.length > 0) {
+    info += `  - Faltas de AG (Ativo de Giro): ${deficitAG.map((as: any) => `${as.assetName} (-${(as.fiscalQty ?? 0) - (as.rePhysicalQty ?? as.physicalQty)} un)`).join(', ')}\n`;
+  }
+  if (a.correctiveActionNotes) {
+    info += `  - Observação/Ação Corretiva: "${a.correctiveActionNotes}"\n`;
+  }
+  return info;
+}).join('\n') || 'Nenhuma auditoria com divergência registrada no momento.'}
+
+Lista de Vales de Faltas Gerados na Unidade por Colaborador:
+${vales.map((v: any) => `- Vale ID: ${v.id} | Colaborador: ${v.colaboradorName} (${v.colaboradorRole}) | Valor: R$ ${v.valor.toFixed(2)} | Motivo: ${v.descricao} | Status: ${v.status} | Obs: ${v.observacao || 'Sem observação'}`).join('\n') || 'Nenhum vale gerado.'}
+`;
+        } catch (dbError) {
+          console.error("Erro ao obter dados dinâmicos para chat:", dbError);
+        }
+
+        const systemInstruction = `Você é o Assistente Virtual Inteligente da plataforma "Aferição de Retorno de Rota - Pau Brasil Distribuidora Ambev". 
+Seu papel é tirar dúvidas dos usuários de forma prestativa, direta, simples e profissional, dando respostas EXTREMAMENTE ASSERTIVAS baseadas nos dados ativos e reais de faturamento e divergências da unidade.
+
+Sobre a plataforma:
+- A plataforma gerencia o retorno dos caminhões de rota da Pau Brasil Distribuidora Ambev.
+- Existem 4 perfis/funções principais:
+  1. Conferente de Pátio: Faz a contagem física (produtos e ativos como paletes/chapas/garrafeiras) dos caminhões que retornam. Pode pausar a conferência com justificativa se necessário.
+  2. Auxiliar de Logística (Fiscal): Faz a conciliação/reconciliação fiscal comparando a contagem física do Conferente com o faturamento fiscal. Pode aprovar, aprovar com sobras/faltas ou solicitar recontagem (nova conferência) caso as divergências sejam injustificáveis. Também pode sincronizar planilhas.
+  3. Monitoramento: Define previsões de chegada (ETA), tripStatus (se retorna no dia ou pernoita), observações de rota e monitora as viagens em tempo real.
+  4. Gestor Master: Tem acesso ao Painel Gerencial (KPIs, tempos médios, produtividade) e Guias de Cadastro (gerenciar Motoristas, Veículos, Produtos e Usuários).
+
+Regras de Negócio Importantes:
+- PERNOITE: Quando um caminhão não retorna no mesmo dia e pernoita fora da distribuidora. O monitoramento atualiza isso para sinalizar ao pátio.
+- RECONTAL / SOLICITAR RECONTAGEM: Quando o Fiscal identifica que a divergência está fora do aceitável, ele pode recusar e pedir que o Conferente refaça a contagem daquele item ou do mapa inteiro.
+- PAUSA DE CONFERÊNCIA: O Conferente pode pausar uma conferência ativa por motivos urgentes (ex: ir ao banheiro, parada técnica, etc.), fornecendo uma observação obrigatória. Esta tela agora está totalmente visível e funcional.
+- SOBRAS & FALTAS PA/AG: Divididos de forma organizada em Produtos Acabados (PA) e Ativos de Giro (AG). São as discrepâncias físicas versus fiscais geradas após a contagem.
+- CONTROLE DE VALES: Quando ocorrem faltas físicas de mercadoria, pode ser gerado um Vale (desconto/compensação) com histórico de vales gerados para cada colaborador para controle do financeiro/gestão.
+
+Aqui estão os dados operacionais ATIVOS da unidade em tempo real para responder de forma super precisa:
+---------------------------
+${activeDatabaseContext}
+---------------------------
+`;
+
+        const contents = [
+          ...messages
+            .filter(m => m.id !== 'welcome')
+            .map(m => ({
+              role: m.role,
+              parts: [{ text: m.text }]
+            })),
+          {
+            role: 'user',
+            parts: [{ text: textToSend }]
+          }
+        ];
+
+        const response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: contents,
+          config: {
+            systemInstruction: systemInstruction,
+          }
+        });
+
+        if (response && response.text) {
+          setMessages(prev => [
+            ...prev,
+            { id: `ai-${Date.now()}`, role: 'model', text: response.text! }
+          ]);
+        } else {
+          throw new Error("Resposta vazia da inteligência artificial.");
+        }
+
+      } catch (err: any) {
+        console.error(err);
+        setMessages(prev => [
+          ...prev,
+          { 
+            id: `ai-${Date.now()}`, 
+            role: 'model', 
+            text: `Erro ao conectar com a I.A.: ${err.message || err}. Certifique-se de que a chave GEMINI_API_KEY está configurada no painel Secrets.` 
+          }
+        ]);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
 
     try {
       const response = await fetch('/api/chat', {

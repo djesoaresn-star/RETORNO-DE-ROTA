@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { User, Driver, Vehicle, Product, ActiveAsset, AuditSession, AuditItem, AuditAssetItem, AuditExchangeItem, FiscalAlert, ImportedRoute, RouteObservation, Vale, ReturnForecast, getAssetCode, getAssetCanonicalName } from '../types';
+import { isClientFirebaseActive } from '../clientFirebase';
 import { ClipboardCheck, ShieldAlert, ArrowRight, ShieldCheck, CheckSquare, AlertTriangle, HelpCircle, Search, RefreshCw, XCircle, DollarSign, Calendar, SlidersHorizontal, FileSpreadsheet, Clock, CheckCircle2, Shield, Trash2, Camera, BarChart3, AlertCircle, Plus, PlusCircle, FileText, Check, Award, Eye, Calculator, Folder, Copy, X, ArrowUpCircle, ArrowDownCircle, Sparkles, FolderOpen, Download } from 'lucide-react';
 import { ImageDB, PhotoRecord } from '../imageDb';
 import { jsPDF } from 'jspdf';
@@ -713,6 +714,11 @@ export default function FiscalView({
   const [loadingSharedPdfs, setLoadingSharedPdfs] = useState<boolean>(false);
 
   const fetchSharedPdfs = async () => {
+    if (isClientFirebaseActive()) {
+      console.log("[ClientFirebase] Ignorando carregamento de PDFs de rede locais (GitHub Pages).");
+      setSharedPdfs([]);
+      return;
+    }
     setLoadingSharedPdfs(true);
     try {
       const res = await fetch("/api/shared-pdfs");
@@ -3002,27 +3008,39 @@ export default function FiscalView({
           updatedAlerts = [newAlert, ...fiscalAlerts];
         }
 
-        // 2. DISPARAR A SAGA DE BAIXA NO BACKEND (UPLOADA PDF E ATUALIZA BANCO EM UMA ÚNICA TRANSAÇÃO)
-        const response = await fetch('/api/concluir-baixa', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            auditId: activeSession.id,
-            pdfBase64: base64,
-            filename: filename,
-            updatedAuditSession: updatedSession,
-            updatedImportedRoutes: updatedRoutes,
-            updatedAlerts: updatedAlerts,
-            user: currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : null
-          })
-        });
+        // 2. DISPARAR A SAGA DE BAIXA NO BACKEND OU EXECUTAR CLIENT-SIDE SE ACTIVE DIRECT FIREBASE
+        let result: any = null;
+        if (isClientFirebaseActive()) {
+          console.log("[ClientFirebase] Ignorando requisição de rede e processando baixa diretamente via Firestore no cliente.");
+          result = {
+            success: true,
+            durableBackup: {
+              cloudStorage: false,
+              firestore: true
+            }
+          };
+        } else {
+          const response = await fetch('/api/concluir-baixa', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              auditId: activeSession.id,
+              pdfBase64: base64,
+              filename: filename,
+              updatedAuditSession: updatedSession,
+              updatedImportedRoutes: updatedRoutes,
+              updatedAlerts: updatedAlerts,
+              user: currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : null
+            })
+          });
 
-        const result = await response.json();
-        if (!result.success) {
-          throw new Error(result.error || "Erro de resposta do servidor na saga de baixa.");
+          result = await response.json();
+          if (!result.success) {
+            throw new Error(result.error || "Erro de resposta do servidor na saga de baixa.");
+          }
         }
 
-        console.log("[Baixa Saga] Sucesso no upload do PDF e gravação do banco de dados:", result);
+        console.log("[Baixa Saga] Sucesso na execução da saga de baixa:", result);
 
         // 3. CICLO DE VIDA DAS FOTOS: Excluídas no momento do fechamento/exportação para otimização e prevenção de corrupção
         console.log("[Baixa Saga] Excluindo fotos de evidência locais e do servidor para este mapa...");

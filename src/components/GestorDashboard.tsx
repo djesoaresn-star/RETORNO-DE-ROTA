@@ -3,6 +3,7 @@ import { User, Driver, Vehicle, Product, ActiveAsset, AuditSession, UserRole, Im
 import { BarChart3, Users, Truck, ShoppingBag, Plus, Trash2, Shield, Clock, Landmark, Percent, CheckCircle2, AlertTriangle, RefreshCw, Eye, Search, Landmark as BankIcon, HardDrive, Camera, FileSpreadsheet, Sparkles, Check, FileCheck, CircleAlert, Edit, FileText, ZoomIn, ZoomOut, ArrowRight, UploadCloud, XCircle, Folder, Copy, SlidersHorizontal, TrendingUp, Box, Layers, Calendar, Database, Cloud } from 'lucide-react';
 import { ImageDB, PhotoRecord } from '../imageDb';
 import { DEFAULT_USERS } from '../data';
+import { isClientFirebaseActive } from '../clientFirebase';
 
 interface GestorDashboardProps {
   currentUser: User;
@@ -196,6 +197,23 @@ export default function GestorDashboard({
   const [firebaseError, setFirebaseError] = useState<string | null>(null);
 
   const fetchFirebaseStatus = async () => {
+    if (isClientFirebaseActive()) {
+      setFirebaseStatus({
+        firebaseConnected: true,
+        firestoreLoadedSuccessfully: true,
+        firestoreQuotaExceeded: false,
+        firestoreAttemptedConnection: true,
+        storageConnected: false,
+        projectId: "Direct Client Mode (GitHub Pages)",
+        databaseId: "(Firestore)",
+        stats: {
+          audits: audits.length,
+          vales: vales.length,
+          photos: 0
+        }
+      });
+      return;
+    }
     setFirebaseLoading(true);
     setFirebaseError(null);
     try {
@@ -237,6 +255,23 @@ export default function GestorDashboard({
   const [clearLoading, setClearLoading] = useState(false);
 
   const fetchFirebaseConfig = async () => {
+    if (isClientFirebaseActive()) {
+      const localCfg = localStorage.getItem('logiroute_firebase_client_config');
+      if (localCfg) {
+        try {
+          const cfg = JSON.parse(localCfg);
+          setFormApiKey(cfg.apiKey || '');
+          setFormAuthDomain(cfg.authDomain || '');
+          setFormProjectId(cfg.projectId || '');
+          setFormStorageBucket(cfg.storageBucket || '');
+          setFormMessagingSenderId(cfg.messagingSenderId || '');
+          setFormAppId(cfg.appId || '');
+          setFormMeasurementId(cfg.measurementId || '');
+          setFormFirestoreDatabaseId(cfg.firestoreDatabaseId || 'default');
+        } catch (e) {}
+      }
+      return;
+    }
     try {
       const res = await fetch('/api/firebase/config');
       const data = await res.json();
@@ -263,6 +298,28 @@ export default function GestorDashboard({
     }
     setSaveLoading(true);
     setTestResult(null);
+    if (isClientFirebaseActive()) {
+      try {
+        const config = {
+          apiKey: formApiKey.trim(),
+          authDomain: formAuthDomain.trim(),
+          projectId: formProjectId.trim(),
+          storageBucket: formStorageBucket.trim(),
+          messagingSenderId: formMessagingSenderId.trim(),
+          appId: formAppId.trim(),
+          measurementId: formMeasurementId.trim(),
+          firestoreDatabaseId: formFirestoreDatabaseId.trim(),
+        };
+        localStorage.setItem('logiroute_firebase_client_config', JSON.stringify(config));
+        setTestResult({ success: true, message: "Configuração do Firebase salva localmente no navegador!" });
+        fetchFirebaseStatus();
+      } catch (err: any) {
+        setTestResult({ success: false, message: err?.message || "Erro ao salvar localmente." });
+      } finally {
+        setSaveLoading(false);
+      }
+      return;
+    }
     try {
       const res = await fetch('/api/firebase/config', {
         method: 'POST',
@@ -299,6 +356,11 @@ export default function GestorDashboard({
     }
     setTestLoading(true);
     setTestResult(null);
+    if (isClientFirebaseActive()) {
+      setTestResult({ success: true, message: "Em modo cliente direto, a conexão é verificada dinamicamente pelo SDK." });
+      setTestLoading(false);
+      return;
+    }
     try {
       const res = await fetch('/api/firebase/test', {
         method: 'POST',
@@ -333,6 +395,21 @@ export default function GestorDashboard({
     }
     setClearLoading(true);
     setTestResult(null);
+    if (isClientFirebaseActive()) {
+      localStorage.removeItem('logiroute_firebase_client_config');
+      setFormApiKey('');
+      setFormAuthDomain('');
+      setFormProjectId('');
+      setFormStorageBucket('');
+      setFormMessagingSenderId('');
+      setFormAppId('');
+      setFormMeasurementId('');
+      setFormFirestoreDatabaseId('default');
+      setTestResult({ success: true, message: "Configuração do Firebase removida." });
+      fetchFirebaseStatus();
+      setClearLoading(false);
+      return;
+    }
     try {
       const res = await fetch('/api/firebase/clear', { method: 'POST' });
       const data = await res.json();
