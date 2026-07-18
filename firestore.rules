@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Helper to check if the document ID is within the explicit catalog keys or chunk keys
+    function isAllowedDoc(docId) {
+      return docId == "users" ||
+             docId == "drivers" ||
+             docId == "vehicles" ||
+             docId == "products" ||
+             docId == "activeAssets" ||
+             docId == "audits" ||
+             docId == "vales" ||
+             docId == "returnForecasts" ||
+             docId == "fiscalAlerts" ||
+             docId == "importedRoutes" ||
+             docId == "photos" ||
+             docId == "audit_logs" ||
+             docId.matches("^[a-zA-Z0-9_]+_chunk_\\d+$");
+    }
+
+    // Helper to validate the structured array envelope of the App State documents or control documents
+    function isValidAppState(incomingData) {
+      return (incomingData.keys().hasAll(['data']) && incomingData.data is list) ||
+             (incomingData.keys().hasAll(['chunkCount']) && incomingData.chunkCount is int);
+    }
+
+    // Secure the app_state collection
+    match /app_state/{documentId} {
+      allow read: if true;
+      allow create, update: if isAllowedDoc(documentId) && isValidAppState(request.resource.data);
+      allow delete: if isAllowedDoc(documentId);
+    }
+
+    // Secure the photos collection
+    match /photos/{photoId} {
+      allow read, write: if true;
+    }
+  }
+}
