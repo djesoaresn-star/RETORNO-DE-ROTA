@@ -3,6 +3,7 @@ import { User, Driver, Vehicle, Product, ActiveAsset, AuditSession, ReturnForeca
 import { AppStore } from './store';
 import { DEFAULT_PRODUCTS } from './data';
 import { ImageDB } from './imageDb';
+import { isClientFirebaseActive, fetchDirectlyFromFirestore, saveDirectlyToFirestore } from './clientFirebase';
 import Header from './components/Header';
 import ConferenteView from './components/ConferenteView';
 import FiscalView from './components/FiscalView';
@@ -121,29 +122,38 @@ export default function App() {
       const payloadKeys = Object.keys(payload);
       if (payloadKeys.length > 0) {
         let success = false;
-        let attempts = 3;
-        let delay = 500;
         
-        for (let i = 0; i < attempts; i++) {
+        if (isClientFirebaseActive()) {
           try {
-            const res = await fetch('/api/db', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                db: payload,
-                user: currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : null
-              }),
-            });
-            if (res.ok) {
-              success = true;
-              break;
-            }
+            success = await saveDirectlyToFirestore(payload);
           } catch (err) {
-            console.warn(`Tentativa ${i + 1} de salvar banco de dados falhou:`, err);
+            console.error('[ClientFirebase] Erro ao sincronizar diretamente com o Firestore:', err);
           }
-          if (i < attempts - 1) {
-            await new Promise(resolve => setTimeout(resolve, delay));
-            delay *= 2;
+        } else {
+          let attempts = 3;
+          let delay = 500;
+          
+          for (let i = 0; i < attempts; i++) {
+            try {
+              const res = await fetch('/api/db', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                  db: payload,
+                  user: currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : null
+                }),
+              });
+              if (res.ok) {
+                success = true;
+                break;
+              }
+            } catch (err) {
+              console.warn(`Tentativa ${i + 1} de salvar banco de dados falhou:`, err);
+            }
+            if (i < attempts - 1) {
+              await new Promise(resolve => setTimeout(resolve, delay));
+              delay *= 2;
+            }
           }
         }
 
@@ -234,8 +244,45 @@ export default function App() {
     const defaultUser = loadedUsers.find(u => u.id === savedUserId) || loadedUsers.find(u => u.id === 'usr_1') || loadedUsers[0];
     setCurrentUser(defaultUser || null);
 
+    const applyDirectDb = (db: any) => {
+      if (db.users && db.users.length > 0) {
+        setUsers(db.users);
+        AppStore.setUsers(db.users);
+        const savedUserId = localStorage.getItem('logiroute_authenticated_user_id');
+        if (savedUserId) {
+          const matchedUser = db.users.find((u: User) => u.id === savedUserId);
+          if (matchedUser) setCurrentUser(matchedUser);
+        }
+      }
+      if (db.drivers) { setDrivers(db.drivers); AppStore.setDrivers(db.drivers); }
+      if (db.vehicles) { setVehicles(db.vehicles); AppStore.setVehicles(db.vehicles); }
+      if (db.products) {
+        const repaired = repairProductsList(db.products);
+        setProducts(repaired);
+        AppStore.setProducts(repaired);
+      }
+      if (db.activeAssets) { setActiveAssets(db.activeAssets); AppStore.setActiveAssets(db.activeAssets); }
+      if (db.audits) { const cleaned = cleanAudits(db.audits); setAudits(cleaned); AppStore.setAudits(cleaned); }
+      if (db.vales) { const cleaned = cleanVales(db.vales); setVales(cleaned); AppStore.setVales(cleaned); }
+      if (db.returnForecasts) { const cleaned = cleanReturnForecasts(db.returnForecasts); setReturnForecasts(cleaned); AppStore.setReturnForecasts(cleaned); }
+      if (db.fiscalAlerts) { setFiscalAlerts(db.fiscalAlerts); AppStore.setFiscalAlerts(db.fiscalAlerts); }
+      if (db.importedRoutes) { const cleaned = cleanImportedRoutes(db.importedRoutes); setImportedRoutes(cleaned); AppStore.setImportedRoutes(cleaned); }
+      if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
+    };
+
     // 2. Fetch latest online database from server
     const fetchLatestServerData = async () => {
+      if (isClientFirebaseActive()) {
+        try {
+          const directDb = await fetchDirectlyFromFirestore();
+          if (directDb) {
+            applyDirectDb(directDb);
+          }
+        } catch (err) {
+          console.warn('[ClientFirebase] Erro ao buscar dados direto do Firestore:', err);
+        }
+        return;
+      }
       try {
         const res = await fetch('/api/db');
         if (res.ok) {
@@ -246,29 +293,7 @@ export default function App() {
           }
           const data = await res.json();
           if (data.success && data.db) {
-            const db = data.db;
-            if (db.users && db.users.length > 0) {
-              setUsers(db.users);
-              AppStore.setUsers(db.users);
-              if (savedUserId) {
-                const matchedUser = db.users.find((u: User) => u.id === savedUserId);
-                if (matchedUser) setCurrentUser(matchedUser);
-              }
-            }
-            if (db.drivers) { setDrivers(db.drivers); AppStore.setDrivers(db.drivers); }
-            if (db.vehicles) { setVehicles(db.vehicles); AppStore.setVehicles(db.vehicles); }
-            if (db.products) {
-              const repaired = repairProductsList(db.products);
-              setProducts(repaired);
-              AppStore.setProducts(repaired);
-            }
-            if (db.activeAssets) { setActiveAssets(db.activeAssets); AppStore.setActiveAssets(db.activeAssets); }
-            if (db.audits) { const cleaned = cleanAudits(db.audits); setAudits(cleaned); AppStore.setAudits(cleaned); }
-            if (db.vales) { const cleaned = cleanVales(db.vales); setVales(cleaned); AppStore.setVales(cleaned); }
-            if (db.returnForecasts) { const cleaned = cleanReturnForecasts(db.returnForecasts); setReturnForecasts(cleaned); AppStore.setReturnForecasts(cleaned); }
-            if (db.fiscalAlerts) { setFiscalAlerts(db.fiscalAlerts); AppStore.setFiscalAlerts(db.fiscalAlerts); }
-            if (db.importedRoutes) { const cleaned = cleanImportedRoutes(db.importedRoutes); setImportedRoutes(cleaned); AppStore.setImportedRoutes(cleaned); }
-            if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
+            applyDirectDb(data.db);
           } else {
             console.log("Banco de dados do servidor está em branco ou indisponível. Ignorando auto-sobreposição para segurança.");
           }
@@ -285,6 +310,13 @@ export default function App() {
       try {
         // Skip polling if there was a recent write on this client to avoid race conditions
         if (Date.now() - lastWriteTime.current < 4000) {
+          return;
+        }
+        if (isClientFirebaseActive()) {
+          const directDb = await fetchDirectlyFromFirestore();
+          if (directDb) {
+            applyDirectDb(directDb);
+          }
           return;
         }
         const res = await fetch('/api/db');
