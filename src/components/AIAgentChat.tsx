@@ -54,7 +54,13 @@ export default function AIAgentChat() {
     setInputText('');
     setIsLoading(true);
 
-    if (isClientFirebaseActive()) {
+    const isStaticDeployment = typeof window !== 'undefined' && (
+      window.location.hostname.includes("github.io") || 
+      window.location.hostname.includes("github.com") ||
+      window.location.href.includes("github")
+    );
+
+    if (isStaticDeployment) {
       try {
         console.log("[ClientFirebase] Usando Gemini diretamente no cliente para o chat...");
         const apiKey = localStorage.getItem('logiroute_gemini_api_key') ||
