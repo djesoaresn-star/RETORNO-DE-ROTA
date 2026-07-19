@@ -3,7 +3,7 @@ import { User, Driver, Vehicle, Product, ActiveAsset, AuditSession, UserRole, Im
 import { BarChart3, Users, Truck, ShoppingBag, Plus, Trash2, Shield, Clock, Landmark, Percent, CheckCircle2, AlertTriangle, RefreshCw, Eye, Search, Landmark as BankIcon, HardDrive, Camera, FileSpreadsheet, Sparkles, Check, FileCheck, CircleAlert, Edit, FileText, ZoomIn, ZoomOut, ArrowRight, UploadCloud, XCircle, Folder, Copy, SlidersHorizontal, TrendingUp, Box, Layers, Calendar, Database, Cloud } from 'lucide-react';
 import { ImageDB, PhotoRecord } from '../imageDb';
 import { DEFAULT_USERS } from '../data';
-import { isClientFirebaseActive } from '../clientFirebase';
+import { isClientFirebaseActive, getGeminiKeyFromFirestore, saveGeminiKeyToFirestore } from '../clientFirebase';
 
 interface GestorDashboardProps {
   currentUser: User;
@@ -260,10 +260,19 @@ export default function GestorDashboard({
 
   const fetchFirebaseConfig = async () => {
     // Carregar chave do Gemini salva localmente no navegador
-    const localGemini = localStorage.getItem('logiroute_gemini_api_key') || '';
-    setFormGeminiApiKey(localGemini);
+    let localGemini = localStorage.getItem('logiroute_gemini_api_key') || '';
 
     if (isClientFirebaseActive()) {
+      try {
+        const firestoreGemini = await getGeminiKeyFromFirestore();
+        if (firestoreGemini) {
+          localGemini = firestoreGemini;
+          localStorage.setItem('logiroute_gemini_api_key', firestoreGemini);
+        }
+      } catch (err) {
+        console.warn('Erro ao carregar chave do Gemini do Firestore:', err);
+      }
+
       const localCfg = localStorage.getItem('logiroute_firebase_client_config');
       if (localCfg) {
         try {
@@ -278,8 +287,12 @@ export default function GestorDashboard({
           setFormFirestoreDatabaseId(cfg.firestoreDatabaseId || 'default');
         } catch (e) {}
       }
+      setFormGeminiApiKey(localGemini);
       return;
     }
+
+    setFormGeminiApiKey(localGemini);
+
     try {
       const res = await fetch('/api/firebase/config');
       const data = await res.json();
@@ -298,13 +311,22 @@ export default function GestorDashboard({
     }
   };
 
-  const handleSaveGeminiKey = (e: React.FormEvent) => {
+  const handleSaveGeminiKey = async (e: React.FormEvent) => {
     e.preventDefault();
     setGeminiSaveLoading(true);
     setGeminiResult(null);
     try {
-      localStorage.setItem('logiroute_gemini_api_key', formGeminiApiKey.trim());
-      setGeminiResult({ success: true, message: "Chave API do Gemini salva com sucesso no navegador!" });
+      const trimmedKey = formGeminiApiKey.trim();
+      localStorage.setItem('logiroute_gemini_api_key', trimmedKey);
+      
+      let extraMessage = "";
+      if (isClientFirebaseActive() && trimmedKey) {
+        const savedToFirestore = await saveGeminiKeyToFirestore(trimmedKey);
+        if (savedToFirestore) {
+          extraMessage = " e sincronizada de forma global no Firestore!";
+        }
+      }
+      setGeminiResult({ success: true, message: `Chave API do Gemini salva com sucesso no navegador${extraMessage}` });
     } catch (err: any) {
       setGeminiResult({ success: false, message: err?.message || "Erro ao salvar a chave da I.A." });
     } finally {

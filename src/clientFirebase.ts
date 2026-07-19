@@ -255,3 +255,35 @@ export async function saveDirectlyToFirestore(payload: any): Promise<boolean> {
     return false;
   }
 }
+
+// Get Gemini Key directly from Firestore
+export async function getGeminiKeyFromFirestore(): Promise<string | null> {
+  const db = getClientFirestore();
+  if (!db) return null;
+  try {
+    const docRef = doc(db, "app_state", "gemini_config");
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      return data?.apiKey || null;
+    }
+  } catch (e) {
+    console.warn("[ClientFirebase] Erro ao carregar chave do Gemini do Firestore:", e);
+  }
+  return null;
+}
+
+// Save Gemini Key directly to Firestore
+export async function saveGeminiKeyToFirestore(apiKey: string): Promise<boolean> {
+  const db = getClientFirestore();
+  if (!db) return false;
+  try {
+    const docRef = doc(db, "app_state", "gemini_config");
+    await setDoc(docRef, { apiKey: apiKey });
+    return true;
+  } catch (e) {
+    console.error("[ClientFirebase] Erro ao salvar chave do Gemini no Firestore:", e);
+    return false;
+  }
+}
+

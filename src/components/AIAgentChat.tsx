@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, Send, X, Sparkles, Bot, User, CornerDownLeft } from 'lucide-react';
 import { AppStore } from '../store';
-import { isClientFirebaseActive } from '../clientFirebase';
+import { isClientFirebaseActive, getGeminiKeyFromFirestore } from '../clientFirebase';
 import { GoogleGenAI } from '@google/genai';
 
 interface ChatMessage {
@@ -60,35 +60,51 @@ export default function AIAgentChat() {
       window.location.href.includes("github")
     );
 
-    if (isStaticDeployment) {
-      try {
-        console.log("[ClientFirebase] Usando Gemini diretamente no cliente para o chat...");
-        const apiKey = localStorage.getItem('logiroute_gemini_api_key') ||
-                       (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : undefined) ||
-                       ((import.meta as any).env?.VITE_GEMINI_API_KEY) ||
-                       undefined;
-
-        if (!apiKey) {
-          throw new Error("Chave API do Gemini não configurada. Salve sua chave no painel de Configurações (Aba Conexão Firebase) como Gestor para utilizar o Assistente no GitHub Pages.");
-        }
-
-        const ai = new GoogleGenAI({ apiKey });
-
-        let activeDatabaseContext = "Nenhum dado ativo no momento.";
+    // Helper to run client-side Gemini call as fallback or primary
+    const runClientSideGemini = async () => {
+      console.log("[ClientFirebase] Tentando usar o Gemini diretamente no cliente...");
+      let apiKey = localStorage.getItem('logiroute_gemini_api_key') || '';
+      
+      // If key is empty in localStorage, attempt loading it from Firestore directly for multi-device sync
+      if (!apiKey && isClientFirebaseActive()) {
         try {
-          const routes = AppStore.getImportedRoutes() || [];
-          const audits = AppStore.getAudits() || [];
-          const vales = AppStore.getVales() || [];
-          const drivers = AppStore.getDrivers() || [];
+          const firestoreKey = await getGeminiKeyFromFirestore();
+          if (firestoreKey) {
+            apiKey = firestoreKey;
+            localStorage.setItem('logiroute_gemini_api_key', firestoreKey);
+          }
+        } catch (e) {
+          console.warn("[ClientFirebase] Falha ao ler chave do Gemini do Firestore:", e);
+        }
+      }
 
-          const openRoutes = routes.filter((r: any) => r.status !== 'fechado');
-          const closedRoutes = routes.filter((r: any) => r.status === 'fechado');
+      if (!apiKey) {
+        apiKey = (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : undefined) ||
+                 ((import.meta as any).env?.VITE_GEMINI_API_KEY) ||
+                 '';
+      }
 
-          const valesPendentes = vales.filter((v: any) => v.status === 'PENDENTE_ASSINATURA');
-          const valesAssinados = vales.filter((v: any) => v.status === 'ASSINADO');
-          const valesCompensados = vales.filter((v: any) => v.status === 'COMPENSADO');
+      if (!apiKey) {
+        throw new Error("Chave API do Gemini não configurada. Salve sua chave no painel de Configurações (Aba Conexão Firebase) como Gestor para utilizar o Assistente de forma global no GitHub Pages ou no Google AI Studio.");
+      }
 
-          activeDatabaseContext = `
+      const ai = new GoogleGenAI({ apiKey });
+
+      let activeDatabaseContext = "Nenhum dado ativo no momento.";
+      try {
+        const routes = AppStore.getImportedRoutes() || [];
+        const audits = AppStore.getAudits() || [];
+        const vales = AppStore.getVales() || [];
+        const drivers = AppStore.getDrivers() || [];
+
+        const openRoutes = routes.filter((r: any) => r.status !== 'fechado');
+        const closedRoutes = routes.filter((r: any) => r.status === 'fechado');
+
+        const valesPendentes = vales.filter((v: any) => v.status === 'PENDENTE_ASSINATURA');
+        const valesAssinados = vales.filter((v: any) => v.status === 'ASSINADO');
+        const valesCompensados = vales.filter((v: any) => v.status === 'COMPENSADO');
+
+        activeDatabaseContext = `
 DADOS ATIVOS EM TEMPO REAL DA UNIDADE:
 - Rotas Importadas Totais: ${routes.length} (Abertas: ${openRoutes.length}, Fechadas: ${closedRoutes.length})
 - Rotas em Aberto no momento: ${openRoutes.map((r: any) => `Mapa ${r.routeMap} (Placa ${r.plate}, Status ${r.status})`).join(', ') || 'Nenhuma'}
@@ -128,11 +144,11 @@ ${audits.map((a: any) => {
 Lista de Vales de Faltas Gerados na Unidade por Colaborador:
 ${vales.map((v: any) => `- Vale ID: ${v.id} | Colaborador: ${v.colaboradorName} (${v.colaboradorRole}) | Valor: R$ ${v.valor.toFixed(2)} | Motivo: ${v.descricao} | Status: ${v.status} | Obs: ${v.observacao || 'Sem observação'}`).join('\n') || 'Nenhum vale gerado.'}
 `;
-        } catch (dbError) {
-          console.error("Erro ao obter dados dinâmicos para chat:", dbError);
-        }
+      } catch (dbError) {
+        console.error("Erro ao obter dados dinâmicos para chat:", dbError);
+      }
 
-        const systemInstruction = `Você é o Assistente Virtual Inteligente da plataforma "Aferição de Retorno de Rota - Pau Brasil Distribuidora Ambev". 
+      const systemInstruction = `Você é o Assistente Virtual Inteligente da plataforma "Aferição de Retorno de Rota - Pau Brasil Distribuidora Ambev". 
 Seu papel é tirar dúvidas dos usuários de forma prestativa, direta, simples e profissional, dando respostas EXTREMAMENTE ASSERTIVAS baseadas nos dados ativos e reais de faturamento e divergências da unidade.
 
 Sobre a plataforma:
@@ -156,88 +172,77 @@ ${activeDatabaseContext}
 ---------------------------
 `;
 
-        const contents = [
-          ...messages
-            .filter(m => m.id !== 'welcome')
-            .map(m => ({
-              role: m.role,
-              parts: [{ text: m.text }]
-            })),
-          {
-            role: 'user',
-            parts: [{ text: textToSend }]
-          }
-        ];
+      const contents = [
+        ...newMessages
+          .filter(m => m.id !== 'welcome')
+          .slice(0, -1)
+          .map(m => ({
+            role: m.role,
+            parts: [{ text: m.text }]
+          })),
+        {
+          role: 'user',
+          parts: [{ text: textToSend }]
+        }
+      ];
 
-        let response;
+      let response;
+      try {
+        console.log("Tentando gerar resposta no cliente com gemini-3.5-flash...");
+        response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: contents,
+          config: {
+            systemInstruction: systemInstruction,
+          }
+        });
+      } catch (firstError: any) {
+        console.warn("Falha no gemini-3.5-flash no cliente, tentando fallback para gemini-3.1-flash-lite...", firstError?.message || firstError);
         try {
-          console.log("Tentando gerar resposta no cliente com gemini-3.5-flash...");
           response = await ai.models.generateContent({
-            model: "gemini-3.5-flash",
+            model: "gemini-3.1-flash-lite",
             contents: contents,
             config: {
               systemInstruction: systemInstruction,
             }
           });
-        } catch (firstError: any) {
-          console.warn("Falha no gemini-3.5-flash no cliente, tentando fallback para gemini-3.1-flash-lite...", firstError?.message || firstError);
+        } catch (secondError: any) {
+          console.warn("Falha no gemini-3.1-flash-lite no cliente, tentando fallback para gemini-2.5-flash...", secondError?.message || secondError);
           try {
             response = await ai.models.generateContent({
-              model: "gemini-3.1-flash-lite",
+              model: "gemini-2.5-flash",
               contents: contents,
               config: {
                 systemInstruction: systemInstruction,
               }
             });
-          } catch (secondError: any) {
-            console.warn("Falha no gemini-3.1-flash-lite no cliente, tentando fallback para gemini-2.5-flash...", secondError?.message || secondError);
-            try {
-              response = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
-                contents: contents,
-                config: {
-                  systemInstruction: systemInstruction,
-                }
-              });
-            } catch (thirdError: any) {
-              console.warn("Falha no gemini-2.5-flash no cliente, tentando fallback para gemini-1.5-flash...", thirdError?.message || thirdError);
-              response = await ai.models.generateContent({
-                model: "gemini-1.5-flash",
-                contents: contents,
-                config: {
-                  systemInstruction: systemInstruction,
-                }
-              });
-            }
+          } catch (thirdError: any) {
+            console.warn("Falha no gemini-2.5-flash no cliente, tentando fallback para gemini-1.5-flash...", thirdError?.message || thirdError);
+            response = await ai.models.generateContent({
+              model: "gemini-1.5-flash",
+              contents: contents,
+              config: {
+                systemInstruction: systemInstruction,
+              }
+            });
           }
         }
+      }
 
-        if (response && response.text) {
-          setMessages(prev => [
-            ...prev,
-            { id: `ai-${Date.now()}`, role: 'model', text: response.text! }
-          ]);
-        } else {
-          throw new Error("Resposta vazia da inteligência artificial.");
-        }
-
-      } catch (err: any) {
-        console.error(err);
+      if (response && response.text) {
         setMessages(prev => [
           ...prev,
-          { 
-            id: `ai-${Date.now()}`, 
-            role: 'model', 
-            text: `Erro ao conectar com a I.A.: ${err.message || err}. Certifique-se de que a chave GEMINI_API_KEY está configurada no painel Secrets.` 
-          }
+          { id: `ai-${Date.now()}`, role: 'model', text: response.text! }
         ]);
-      } finally {
-        setIsLoading(false);
+        return true;
+      } else {
+        throw new Error("Resposta vazia da inteligência artificial no cliente.");
       }
-      return;
-    }
+    };
 
-    try {
+    // Helper to run server-side chat API call
+    const runServerSideGemini = async () => {
+      console.log("[ClientFirebase] Tentando usar o servidor (/api/chat) para o chat...");
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -245,7 +250,6 @@ ${activeDatabaseContext}
         },
         body: JSON.stringify({
           message: textToSend,
-          // Format history excluding the welcome message
           history: messages
             .filter(m => m.id !== 'welcome')
             .map(m => ({
@@ -263,37 +267,100 @@ ${activeDatabaseContext}
         } catch (jsonErr) {
           console.error("Error parsing chat response JSON:", jsonErr);
         }
-      } else {
-        console.warn("Unexpected chat response content type:", contentType);
       }
-      
+
       if (response.ok && data.text) {
         setMessages(prev => [
           ...prev,
           { id: `ai-${Date.now()}`, role: 'model', text: data.text }
         ]);
+        return true;
       } else {
-        setMessages(prev => [
-          ...prev,
-          { 
-            id: `ai-${Date.now()}`, 
-            role: 'model', 
-            text: data.error || 'Desculpe, ocorreu uma instabilidade ao conectar com o servidor da I.A. Verifique se o seu GEMINI_API_KEY está configurado corretamente.' 
-          }
-        ]);
+        throw new Error(data.error || `Servidor retornou erro ${response.status}`);
       }
-    } catch (err) {
-      console.error(err);
+    };
+
+    // Local fallback response function
+    const runLocalFallbackResponse = (query: string) => {
+      const normalized = query.toLowerCase();
+      let responseText = "";
+
+      if (normalized.includes("conferência") || normalized.includes("conferencia") || normalized.includes("iniciar")) {
+        responseText = `**Como Iniciar uma Conferência Física:**\n\n` +
+          `Para iniciar a aferição física de um caminhão que retornou da rota, siga estes passos simples:\n\n` +
+          `1. Certifique-se de estar logado com o perfil **Conferente de Pátio** (você pode alterar o usuário logado na barra superior).\n` +
+          `2. No menu principal, vá para **Painel de Pátio**.\n` +
+          `3. Localize o caminhão/rota desejado na lista de faturados e clique em **Iniciar Conferência**.\n` +
+          `4. Faça a contagem de todos os itens e insira as quantidades físicas reais para Produtos Acabados (PA) e Ativos de Giro (AG).\n` +
+          `5. Caso precise fazer uma pausa (parada técnica, banheiro, etc.), clique em **Pausar** e informe o motivo. Para retomar, basta clicar em **Retomar**.\n` +
+          `6. Ao finalizar a contagem de todos os itens, clique em **Finalizar Conferência** para enviar os dados para a Reconciliação Fiscal.`;
+      } else if (normalized.includes("pernoite")) {
+        responseText = `**Como Funciona o Pernoite de Rota:**\n\n` +
+          `O status de **Pernoite** é aplicado quando um caminhão de rota não consegue retornar à distribuidora no mesmo dia de faturamento e precisa passar a noite fora da unidade.\n\n` +
+          `• **Ação do Monitoramento:** O operador de monitoramento abre a rota no painel e altera o status de viagem (*tripStatus*) para **Pernoite**.\n` +
+          `• **Visibilidade:** O pátio e o faturamento recebem esse alerta visual instantaneamente em suas telas, sabendo que aquele caminhão não retornará no turno atual.\n` +
+          `• **Retorno:** No dia seguinte, quando o caminhão chegar com segurança na unidade, ele é recebido para a conferência de pátio normal.`;
+      } else if (normalized.includes("sobras") || normalized.includes("sobra") || normalized.includes("sobrar")) {
+        responseText = `**Procedimento em caso de Sobras de Mercadoria:**\n\n` +
+          `Se o Conferente identificar que a contagem física de um item é **maior** do que a quantidade faturada na nota fiscal, isso é registrado como uma Sobra:\n\n` +
+          `1. O Conferente insere a quantidade física exata contada. O sistema calculará a sobra automaticamente.\n` +
+          `2. Na tela de Reconciliação Fiscal, o **Auxiliar de Logística (Fiscal)** verá o item destacado com a cor amarela indicando a sobra.\n` +
+          `3. O Fiscal deve investigar o motivo junto ao motorista (ex: erro de carregamento no pátio de manhã ou mercadoria não faturada de outra rota).\n` +
+          `4. Se a justificativa for aceitável, o Fiscal pode aprovar com a observação correspondente. Caso contrário, ele pode **Solicitar Recontagem** para garantir que não houve erro na contagem física.`;
+      } else if (normalized.includes("recontagem") || normalized.includes("fiscal") || normalized.includes("recusar")) {
+        responseText = `**Como Solicitar Recontagem Fiscal:**\n\n` +
+          `Se houver divergências de Sobras ou Faltas sem justificativa clara ou se o Fiscal suspeitar de um erro na contagem física do Conferente, ele pode recusar a contagem e pedir que seja refeita:\n\n` +
+          `1. Acesse o sistema com o perfil **Auxiliar de Logística (Fiscal)**.\n` +
+          `2. Abra a rota que está com status 'conferido' pendente de análise.\n` +
+          `3. Clique no botão **Solicitar Recontagem** na parte inferior da tela.\n` +
+          `4. O status da rota mudará imediatamente para 'Pendente de Recontagem' e o caminhão ficará disponível novamente no painel do **Conferente de Pátio** para que a contagem seja feita do zero.`;
+      } else {
+        responseText = `Olá! Sou o Assistente Virtual Inteligente da Pau Brasil Distribuidora Ambev.\n\n` +
+          `Atualmente estou operando no **Modo de Resposta Local Inteligente**, pois não encontrei uma chave API do Gemini configurada nas Secrets ou no painel do aplicativo.\n\n` +
+          `💡 **Como habilitar meu cérebro de Inteligência Artificial completo?**\n` +
+          `1. Vá até o menu lateral esquerdo e clique na aba **Conexão Firebase Store**.\n` +
+          `2. Role até o card **Configurações do Assistente de Inteligência Artificial (Gemini I.A.)**.\n` +
+          `3. Cole sua chave de API do Gemini (obtida gratuitamente em [Google AI Studio](https://aistudio.google.com/)).\n` +
+          `4. Clique em **Salvar**. A chave será sincronizada globalmente no banco Firestore e o assistente de I.A. passará a responder perguntas dinâmicas e inteligentes analisando todos os faturamentos e auditorias ativas em tempo real!`;
+      }
+
       setMessages(prev => [
         ...prev,
-        { 
-          id: `ai-${Date.now()}`, 
-          role: 'model', 
-          text: 'Não foi possível estabelecer contato com a inteligência artificial. Certifique-se de que o servidor está rodando.' 
-        }
+        { id: `ai-${Date.now()}`, role: 'model', text: responseText }
       ]);
-    } finally {
-      setIsLoading(false);
+    };
+
+    // Execution logic with automatic fallbacks
+    if (isStaticDeployment) {
+      // Preference: client-side (for GitHub pages)
+      try {
+        await runClientSideGemini();
+      } catch (clientErr: any) {
+        console.warn("Client-side execution failed, trying server-side as last resort...", clientErr);
+        try {
+          await runServerSideGemini();
+        } catch (serverErr: any) {
+          console.error("Both client and server paths failed in static deployment mode. Using local fallback.");
+          runLocalFallbackResponse(textToSend);
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      // Preference: server-side (for dynamic Google AI Studio dev container)
+      try {
+        await runServerSideGemini();
+      } catch (serverErr: any) {
+        console.warn("Server-side execution failed or is unconfigured. Falling back to local client-side...", serverErr);
+        try {
+          await runClientSideGemini();
+        } catch (clientErr: any) {
+          console.error("Both client and server paths failed in full-stack deployment mode. Using local fallback.");
+          runLocalFallbackResponse(textToSend);
+        }
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
