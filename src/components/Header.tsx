@@ -574,7 +574,7 @@ export default function Header({
 
       {/* Mobile menu navigation */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex md:hidden justify-around py-2 border-t border-slate-800 overflow-x-auto whitespace-nowrap">
+        <div className="flex md:hidden justify-start items-center gap-2 py-2.5 border-t border-slate-800 overflow-x-auto whitespace-nowrap scrollbar-none px-2">
           {currentUser.role === 'conferente' && (
             <button
               onClick={() => setActiveTab('conferencias')}

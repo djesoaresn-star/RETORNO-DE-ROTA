@@ -249,12 +249,20 @@ export default function GestorDashboard({
   const [formMeasurementId, setFormMeasurementId] = useState('');
   const [formFirestoreDatabaseId, setFormFirestoreDatabaseId] = useState('');
 
+  const [formGeminiApiKey, setFormGeminiApiKey] = useState('');
+  const [geminiSaveLoading, setGeminiSaveLoading] = useState(false);
+  const [geminiResult, setGeminiResult] = useState<{ success: boolean; message: string } | null>(null);
+
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [testLoading, setTestLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
   const [clearLoading, setClearLoading] = useState(false);
 
   const fetchFirebaseConfig = async () => {
+    // Carregar chave do Gemini salva localmente no navegador
+    const localGemini = localStorage.getItem('logiroute_gemini_api_key') || '';
+    setFormGeminiApiKey(localGemini);
+
     if (isClientFirebaseActive()) {
       const localCfg = localStorage.getItem('logiroute_firebase_client_config');
       if (localCfg) {
@@ -287,6 +295,20 @@ export default function GestorDashboard({
       }
     } catch (e) {
       console.error('Erro ao buscar configuração do Firebase:', e);
+    }
+  };
+
+  const handleSaveGeminiKey = (e: React.FormEvent) => {
+    e.preventDefault();
+    setGeminiSaveLoading(true);
+    setGeminiResult(null);
+    try {
+      localStorage.setItem('logiroute_gemini_api_key', formGeminiApiKey.trim());
+      setGeminiResult({ success: true, message: "Chave API do Gemini salva com sucesso no navegador!" });
+    } catch (err: any) {
+      setGeminiResult({ success: false, message: err?.message || "Erro ao salvar a chave da I.A." });
+    } finally {
+      setGeminiSaveLoading(false);
     }
   };
 
@@ -3782,6 +3804,66 @@ export default function GestorDashboard({
                           <Trash2 className="h-3.5 w-3.5" />
                         )}
                         <span>Limpar</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* Gemini API Key Configuration Card */}
+                <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4 shadow-sm">
+                  <h4 className="font-sans font-bold text-xs text-slate-900 flex items-center space-x-2 pb-3 border-b border-slate-100">
+                    <Sparkles className="h-4 w-4 text-[#0f35a9] animate-pulse" />
+                    <span>Configurações do Assistente de Inteligência Artificial (Gemini I.A.)</span>
+                  </h4>
+
+                  <form onSubmit={handleSaveGeminiKey} className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        GEMINI API KEY <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="password"
+                        value={formGeminiApiKey}
+                        onChange={(e) => setFormGeminiApiKey(e.target.value)}
+                        placeholder="Insira a sua chave da API Gemini obtida no Google AI Studio (AIzaSy...)"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-400"
+                        required
+                      />
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        A chave de API é armazenada de forma segura e localmente apenas no navegador deste dispositivo para permitir que o Assistente de I.A. funcione de forma direta e sem limites de servidores em hospedagens estáticas (GitHub Pages).
+                      </p>
+                    </div>
+
+                    {geminiResult && (
+                      <div className={`p-4 rounded-xl flex items-start space-x-3 text-xs border ${
+                        geminiResult.success 
+                          ? 'bg-emerald-50 text-emerald-900 border-emerald-200' 
+                          : 'bg-red-50 text-red-900 border-red-200'
+                      }`}>
+                        {geminiResult.success ? (
+                          <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0" />
+                        ) : (
+                          <XCircle className="h-5 w-5 text-red-600 flex-shrink-0" />
+                        )}
+                        <div className="flex-1">
+                          <strong className="block font-bold">{geminiResult.success ? 'Sucesso!' : 'Ocorreu um erro:'}</strong>
+                          <span className="opacity-95">{geminiResult.message}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pt-2">
+                      <button
+                        type="submit"
+                        disabled={geminiSaveLoading}
+                        className="px-5 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-[#0f35a9] hover:bg-blue-800 text-white transition flex items-center justify-center space-x-2 shadow-sm cursor-pointer disabled:opacity-50"
+                      >
+                        {geminiSaveLoading ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <FileText className="h-3.5 w-3.5" />
+                        )}
+                        <span>Salvar Chave I.A.</span>
                       </button>
                     </div>
                   </form>

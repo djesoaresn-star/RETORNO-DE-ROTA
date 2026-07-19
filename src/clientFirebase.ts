@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { initializeFirestore, doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
+import { initializeFirestore, doc, getDoc, setDoc, deleteDoc, collection, onSnapshot } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
 
 // Shared DB keys for state tracking
@@ -15,7 +15,17 @@ let firestoreInstance: any = null;
 export function isClientFirebaseActive(): boolean {
   if (typeof window === "undefined") return false;
   
-  // GitHub Pages hosting is purely static, so we MUST connect directly to Firebase
+  try {
+    // If we have a valid direct Firestore connection configured and working, use it everywhere!
+    // This unifies the Google AI Studio container and GitHub Pages deployments
+    // to share the exact same database and communicate in real-time across devices.
+    const db = getClientFirestore();
+    if (db) return true;
+  } catch (e) {
+    console.warn("[ClientFirebase] Erro ao validar conexao do Firestore:", e);
+  }
+  
+  // Static host check fallback
   const isGitHub = window.location.hostname.includes("github.io") || 
                    window.location.hostname.includes("github.com") ||
                    window.location.href.includes("github");
@@ -23,22 +33,95 @@ export function isClientFirebaseActive(): boolean {
   return isGitHub;
 }
 
+// Subscribe to real-time updates directly from Firestore collection "app_state"
+// Reconstructs chunked documents automatically to prevent physical 1MB limit issues
+export function subscribeToFirestore(onUpdate: (db: any) => void): () => void {
+  const db = getClientFirestore();
+  if (!db) return () => {};
+
+  console.log("[ClientFirebase] Inscrevendo para atualizações em tempo real (onSnapshot)...");
+
+  try {
+    const collRef = collection(db, "app_state");
+    const unsubscribe = onSnapshot(collRef, (snapshot) => {
+      try {
+        const docMap: Record<string, any> = {};
+        snapshot.forEach((doc) => {
+          docMap[doc.id] = doc.data();
+        });
+
+        const combinedDb: any = {};
+        for (const key of DB_KEYS) {
+          const docData = docMap[key];
+          if (docData) {
+            if (docData.chunkCount !== undefined) {
+              const chunkCount = docData.chunkCount;
+              const chunks: any[] = [];
+              for (let i = 0; i < chunkCount; i++) {
+                const chunkDoc = docMap[`${key}_chunk_${i}`];
+                chunks[i] = chunkDoc ? (chunkDoc.data || []) : [];
+              }
+              combinedDb[key] = chunks.flat();
+            } else if (docData.data !== undefined) {
+              combinedDb[key] = docData.data;
+            } else {
+              combinedDb[key] = docData;
+            }
+          }
+        }
+        
+        onUpdate(combinedDb);
+      } catch (innerErr) {
+        console.error("[ClientFirebase] Erro ao processar dados de snapshot do Firestore:", innerErr);
+      }
+    }, (error) => {
+      console.error("[ClientFirebase] Erro na inscrição em tempo real do Firestore:", error);
+    });
+
+    return unsubscribe;
+  } catch (err) {
+    console.error("[ClientFirebase] Erro ao registrar onSnapshot no Firestore:", err);
+    return () => {};
+  }
+}
+
 // Get or initialize the direct client Firestore instance
 export function getClientFirestore() {
   if (firestoreInstance) return firestoreInstance;
   
   try {
+    let config: any = null;
+    
+    // Check localStorage first
+    if (typeof window !== "undefined") {
+      const localCfg = localStorage.getItem('logiroute_firebase_client_config');
+      if (localCfg) {
+        try {
+          config = JSON.parse(localCfg);
+          console.log("[ClientFirebase] Carregada configuração do Firebase do localStorage.");
+        } catch (e) {
+          console.warn("[ClientFirebase] Falha ao analisar configuração do Firebase do localStorage:", e);
+        }
+      }
+    }
+    
+    // Fallback to static applet config
+    if (!config || !config.projectId) {
+      config = firebaseConfig;
+    }
+
     if (
-      !firebaseConfig.projectId || 
-      firebaseConfig.projectId === "remixed-project-id" ||
-      firebaseConfig.projectId.includes("placeholder")
+      !config ||
+      !config.projectId || 
+      config.projectId === "remixed-project-id" ||
+      config.projectId.includes("placeholder")
     ) {
       console.warn("[ClientFirebase] Configuração de Firebase vazia ou placeholder. Conexão direta ignorada.");
       return null;
     }
 
-    const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-    firestoreInstance = initializeFirestore(app, {}, firebaseConfig.firestoreDatabaseId || undefined);
+    const app = getApps().length === 0 ? initializeApp(config) : getApp();
+    firestoreInstance = initializeFirestore(app, {}, config.firestoreDatabaseId || undefined);
     console.log("[ClientFirebase] Conexão direta com Firestore inicializada com sucesso!");
     return firestoreInstance;
   } catch (err) {

@@ -57,13 +57,13 @@ export default function AIAgentChat() {
     if (isClientFirebaseActive()) {
       try {
         console.log("[ClientFirebase] Usando Gemini diretamente no cliente para o chat...");
-        const apiKey = (process.env.GEMINI_API_KEY) || 
-                       ((import.meta as any).env?.VITE_GEMINI_API_KEY) || 
-                       localStorage.getItem('logiroute_gemini_api_key') ||
+        const apiKey = localStorage.getItem('logiroute_gemini_api_key') ||
+                       (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : undefined) ||
+                       ((import.meta as any).env?.VITE_GEMINI_API_KEY) ||
                        undefined;
 
         if (!apiKey) {
-          throw new Error("Chave API não configurada. Configure a chave GEMINI_API_KEY no painel de Configurações > Secrets ou na build.");
+          throw new Error("Chave API do Gemini não configurada. Salve sua chave no painel de Configurações (Aba Conexão Firebase) como Gestor para utilizar o Assistente no GitHub Pages.");
         }
 
         const ai = new GoogleGenAI({ apiKey });
@@ -163,13 +163,48 @@ ${activeDatabaseContext}
           }
         ];
 
-        const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: contents,
-          config: {
-            systemInstruction: systemInstruction,
+        let response;
+        try {
+          console.log("Tentando gerar resposta no cliente com gemini-3.5-flash...");
+          response = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: contents,
+            config: {
+              systemInstruction: systemInstruction,
+            }
+          });
+        } catch (firstError: any) {
+          console.warn("Falha no gemini-3.5-flash no cliente, tentando fallback para gemini-3.1-flash-lite...", firstError?.message || firstError);
+          try {
+            response = await ai.models.generateContent({
+              model: "gemini-3.1-flash-lite",
+              contents: contents,
+              config: {
+                systemInstruction: systemInstruction,
+              }
+            });
+          } catch (secondError: any) {
+            console.warn("Falha no gemini-3.1-flash-lite no cliente, tentando fallback para gemini-2.5-flash...", secondError?.message || secondError);
+            try {
+              response = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: contents,
+                config: {
+                  systemInstruction: systemInstruction,
+                }
+              });
+            } catch (thirdError: any) {
+              console.warn("Falha no gemini-2.5-flash no cliente, tentando fallback para gemini-1.5-flash...", thirdError?.message || thirdError);
+              response = await ai.models.generateContent({
+                model: "gemini-1.5-flash",
+                contents: contents,
+                config: {
+                  systemInstruction: systemInstruction,
+                }
+              });
+            }
           }
-        });
+        }
 
         if (response && response.text) {
           setMessages(prev => [

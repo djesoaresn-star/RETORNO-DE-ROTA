@@ -3,7 +3,7 @@ import { User, Driver, Vehicle, Product, ActiveAsset, AuditSession, ReturnForeca
 import { AppStore } from './store';
 import { DEFAULT_PRODUCTS } from './data';
 import { ImageDB } from './imageDb';
-import { isClientFirebaseActive, fetchDirectlyFromFirestore, saveDirectlyToFirestore } from './clientFirebase';
+import { isClientFirebaseActive, fetchDirectlyFromFirestore, saveDirectlyToFirestore, subscribeToFirestore } from './clientFirebase';
 import Header from './components/Header';
 import ConferenteView from './components/ConferenteView';
 import FiscalView from './components/FiscalView';
@@ -223,6 +223,32 @@ export default function App() {
     }));
   };
 
+  const applyDirectDb = (db: any) => {
+    if (db.users && db.users.length > 0) {
+      setUsers(db.users);
+      AppStore.setUsers(db.users);
+      const savedUserId = localStorage.getItem('logiroute_authenticated_user_id');
+      if (savedUserId) {
+        const matchedUser = db.users.find((u: User) => u.id === savedUserId);
+        if (matchedUser) setCurrentUser(matchedUser);
+      }
+    }
+    if (db.drivers) { setDrivers(db.drivers); AppStore.setDrivers(db.drivers); }
+    if (db.vehicles) { setVehicles(db.vehicles); AppStore.setVehicles(db.vehicles); }
+    if (db.products) {
+      const repaired = repairProductsList(db.products);
+      setProducts(repaired);
+      AppStore.setProducts(repaired);
+    }
+    if (db.activeAssets) { setActiveAssets(db.activeAssets); AppStore.setActiveAssets(db.activeAssets); }
+    if (db.audits) { const cleaned = cleanAudits(db.audits); setAudits(cleaned); AppStore.setAudits(cleaned); }
+    if (db.vales) { const cleaned = cleanVales(db.vales); setVales(cleaned); AppStore.setVales(cleaned); }
+    if (db.returnForecasts) { const cleaned = cleanReturnForecasts(db.returnForecasts); setReturnForecasts(cleaned); AppStore.setReturnForecasts(cleaned); }
+    if (db.fiscalAlerts) { setFiscalAlerts(db.fiscalAlerts); AppStore.setFiscalAlerts(db.fiscalAlerts); }
+    if (db.importedRoutes) { const cleaned = cleanImportedRoutes(db.importedRoutes); setImportedRoutes(cleaned); AppStore.setImportedRoutes(cleaned); }
+    if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
+  };
+
   // Load all databases from store on mount and establish server sync
   useEffect(() => {
     // 1. Initial quick load from LocalStorage
@@ -243,32 +269,6 @@ export default function App() {
     const savedUserId = localStorage.getItem('logiroute_authenticated_user_id');
     const defaultUser = loadedUsers.find(u => u.id === savedUserId) || loadedUsers.find(u => u.id === 'usr_1') || loadedUsers[0];
     setCurrentUser(defaultUser || null);
-
-    const applyDirectDb = (db: any) => {
-      if (db.users && db.users.length > 0) {
-        setUsers(db.users);
-        AppStore.setUsers(db.users);
-        const savedUserId = localStorage.getItem('logiroute_authenticated_user_id');
-        if (savedUserId) {
-          const matchedUser = db.users.find((u: User) => u.id === savedUserId);
-          if (matchedUser) setCurrentUser(matchedUser);
-        }
-      }
-      if (db.drivers) { setDrivers(db.drivers); AppStore.setDrivers(db.drivers); }
-      if (db.vehicles) { setVehicles(db.vehicles); AppStore.setVehicles(db.vehicles); }
-      if (db.products) {
-        const repaired = repairProductsList(db.products);
-        setProducts(repaired);
-        AppStore.setProducts(repaired);
-      }
-      if (db.activeAssets) { setActiveAssets(db.activeAssets); AppStore.setActiveAssets(db.activeAssets); }
-      if (db.audits) { const cleaned = cleanAudits(db.audits); setAudits(cleaned); AppStore.setAudits(cleaned); }
-      if (db.vales) { const cleaned = cleanVales(db.vales); setVales(cleaned); AppStore.setVales(cleaned); }
-      if (db.returnForecasts) { const cleaned = cleanReturnForecasts(db.returnForecasts); setReturnForecasts(cleaned); AppStore.setReturnForecasts(cleaned); }
-      if (db.fiscalAlerts) { setFiscalAlerts(db.fiscalAlerts); AppStore.setFiscalAlerts(db.fiscalAlerts); }
-      if (db.importedRoutes) { const cleaned = cleanImportedRoutes(db.importedRoutes); setImportedRoutes(cleaned); AppStore.setImportedRoutes(cleaned); }
-      if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
-    };
 
     // 2. Fetch latest online database from server
     const fetchLatestServerData = async () => {
@@ -363,8 +363,23 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // 4. Setup real-time database updates via Server-Sent Events (SSE)
+  // 4. Setup real-time database updates via Server-Sent Events (SSE) or Firestore Live Sync
   useEffect(() => {
+    if (isClientFirebaseActive()) {
+      console.log("[ClientFirebase] Inicializando sincronização em tempo real nativa com Firestore...");
+      const unsubscribe = subscribeToFirestore((db) => {
+        // Skip applying updates if there was a recent local write on this client to avoid race conditions
+        if (Date.now() - lastWriteTime.current < 4000) {
+          return;
+        }
+        applyDirectDb(db);
+      });
+      return () => {
+        console.log("[ClientFirebase] Cancelando inscrição em tempo real com Firestore...");
+        unsubscribe();
+      };
+    }
+
     let eventSource: EventSource | null = null;
     let reconnectTimeout: any = null;
 

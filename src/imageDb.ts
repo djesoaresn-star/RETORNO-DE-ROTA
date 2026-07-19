@@ -4,6 +4,9 @@
  * Falls back to highly resilient in-memory storage if IndexedDB is disabled, blocked or sandboxed in an iframe.
  */
 
+import { isClientFirebaseActive, getClientFirestore } from './clientFirebase';
+import { doc, setDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
+
 export interface PhotoRecord {
   id: string;             // Unique ID (e.g., photo_123)
   auditId: string;        // ID of the audit session
@@ -101,17 +104,14 @@ export class ImageDB {
 
     // Attempt instant replication to the server with confirmation
     try {
-      const res = await fetch('/api/photos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ photo: newRecord })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.photo) {
-          // Success! Replace the local record with the synced record (containing Storage URL and syncPending: false)
+      if (isClientFirebaseActive()) {
+        const firestoreDb = getClientFirestore();
+        if (firestoreDb) {
+          const photoDocRef = doc(firestoreDb, "photos", newRecord.id);
+          await setDoc(photoDocRef, newRecord);
+          
           const syncedRecord: PhotoRecord = {
-            ...data.photo,
+            ...newRecord,
             syncPending: false
           };
 
@@ -133,6 +133,40 @@ export class ImageDB {
           window.dispatchEvent(new CustomEvent('logiroute_photos_updated'));
           return syncedRecord;
         }
+      } else {
+        const res = await fetch('/api/photos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ photo: newRecord })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.photo) {
+            // Success! Replace the local record with the synced record (containing Storage URL and syncPending: false)
+            const syncedRecord: PhotoRecord = {
+              ...data.photo,
+              syncPending: false
+            };
+
+            if (this.isInMemoryFallback || !db) {
+              this.memoryStore.set(syncedRecord.id, syncedRecord);
+            } else {
+              try {
+                await new Promise<void>((resolve) => {
+                  const transaction = db.transaction(STORE_NAME, 'readwrite');
+                  const store = transaction.objectStore(STORE_NAME);
+                  const request = store.put(syncedRecord);
+                  request.onsuccess = request.onerror = () => resolve();
+                });
+              } catch (err) {
+                this.memoryStore.set(syncedRecord.id, syncedRecord);
+              }
+            }
+            
+            window.dispatchEvent(new CustomEvent('logiroute_photos_updated'));
+            return syncedRecord;
+          }
+        }
       }
     } catch (e) {
       console.warn('Replication failed. Photo will be synchronized automatically in background.', e);
@@ -151,31 +185,54 @@ export class ImageDB {
       
       console.log(`[ImageDB] Sincronizando ${pending.length} fotos pendentes tiradas em modo offline...`);
       const db = await this.getDB();
+      const isClientFB = isClientFirebaseActive();
+      const firestoreDb = isClientFB ? getClientFirestore() : null;
       
       for (const p of pending) {
         try {
-          const res = await fetch('/api/photos', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ photo: p })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success && data.photo) {
-              const syncedRecord: PhotoRecord = {
-                ...data.photo,
-                syncPending: false
-              };
-              
-              if (this.isInMemoryFallback || !db) {
-                this.memoryStore.set(syncedRecord.id, syncedRecord);
-              } else {
-                await new Promise<void>((resolve) => {
-                  const transaction = db.transaction(STORE_NAME, 'readwrite');
-                  const store = transaction.objectStore(STORE_NAME);
-                  const request = store.put(syncedRecord);
-                  request.onsuccess = request.onerror = () => resolve();
-                });
+          if (isClientFB && firestoreDb) {
+            const photoDocRef = doc(firestoreDb, "photos", p.id);
+            await setDoc(photoDocRef, p);
+            
+            const syncedRecord: PhotoRecord = {
+              ...p,
+              syncPending: false
+            };
+            
+            if (this.isInMemoryFallback || !db) {
+              this.memoryStore.set(syncedRecord.id, syncedRecord);
+            } else {
+              await new Promise<void>((resolve) => {
+                const transaction = db.transaction(STORE_NAME, 'readwrite');
+                const store = transaction.objectStore(STORE_NAME);
+                const request = store.put(syncedRecord);
+                request.onsuccess = request.onerror = () => resolve();
+              });
+            }
+          } else if (!isClientFB) {
+            const res = await fetch('/api/photos', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ photo: p })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.success && data.photo) {
+                const syncedRecord: PhotoRecord = {
+                  ...data.photo,
+                  syncPending: false
+                };
+                
+                if (this.isInMemoryFallback || !db) {
+                  this.memoryStore.set(syncedRecord.id, syncedRecord);
+                } else {
+                  await new Promise<void>((resolve) => {
+                    const transaction = db.transaction(STORE_NAME, 'readwrite');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const request = store.put(syncedRecord);
+                    request.onsuccess = request.onerror = () => resolve();
+                  });
+                }
               }
             }
           }
@@ -424,18 +481,31 @@ export class ImageDB {
    */
   private static async fetchPhotosFromServer(auditId: string): Promise<PhotoRecord[]> {
     try {
-      const res = await fetch(`/api/photos?auditId=${encodeURIComponent(auditId)}`);
-      if (res.ok) {
-        const contentType = res.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-          const data = await res.json();
-          if (data.success && Array.isArray(data.photos)) {
-            return data.photos;
+      if (isClientFirebaseActive()) {
+        const firestoreDb = getClientFirestore();
+        if (!firestoreDb) return [];
+        const photosCol = collection(firestoreDb, "photos");
+        const q = query(photosCol, where("auditId", "==", auditId));
+        const querySnapshot = await getDocs(q);
+        const photos: PhotoRecord[] = [];
+        querySnapshot.forEach((doc) => {
+          photos.push(doc.data() as PhotoRecord);
+        });
+        return photos;
+      } else {
+        const res = await fetch(`/api/photos?auditId=${encodeURIComponent(auditId)}`);
+        if (res.ok) {
+          const contentType = res.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            const data = await res.json();
+            if (data.success && Array.isArray(data.photos)) {
+              return data.photos;
+            }
           }
         }
       }
     } catch (e) {
-      console.log("Error querying server photos.");
+      console.log("Error querying server photos.", e);
     }
     return [];
   }
@@ -543,18 +613,30 @@ export class ImageDB {
    */
   private static async fetchAllPhotosFromServer(): Promise<PhotoRecord[]> {
     try {
-      const res = await fetch('/api/photos');
-      if (res.ok) {
-        const contentType = res.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-          const data = await res.json();
-          if (data.success && Array.isArray(data.photos)) {
-            return data.photos;
+      if (isClientFirebaseActive()) {
+        const firestoreDb = getClientFirestore();
+        if (!firestoreDb) return [];
+        const photosCol = collection(firestoreDb, "photos");
+        const querySnapshot = await getDocs(photosCol);
+        const photos: PhotoRecord[] = [];
+        querySnapshot.forEach((doc) => {
+          photos.push(doc.data() as PhotoRecord);
+        });
+        return photos;
+      } else {
+        const res = await fetch('/api/photos');
+        if (res.ok) {
+          const contentType = res.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            const data = await res.json();
+            if (data.success && Array.isArray(data.photos)) {
+              return data.photos;
+            }
           }
         }
       }
     } catch (e) {
-      console.log("Error querying all server photos.");
+      console.log("Error querying all server photos.", e);
     }
     return [];
   }
@@ -584,9 +666,17 @@ export class ImageDB {
 
     // Delete on server
     try {
-      await fetch(`/api/photos/${id}`, { method: 'DELETE' });
+      if (isClientFirebaseActive()) {
+        const firestoreDb = getClientFirestore();
+        if (firestoreDb) {
+          const photoDocRef = doc(firestoreDb, "photos", id);
+          await deleteDoc(photoDocRef);
+        }
+      } else {
+        await fetch(`/api/photos/${id}`, { method: 'DELETE' });
+      }
     } catch (e) {
-      console.log('Server file deletion bypassed in background.');
+      console.log('Server file deletion bypassed in background.', e);
     }
   }
 
