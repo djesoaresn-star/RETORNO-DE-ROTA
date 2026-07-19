@@ -40,6 +40,22 @@ export default function Header({
   const [apkProgress, setApkProgress] = useState(0);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isIframe, setIsIframe] = useState(false);
+  const [showCustomUrlInput, setShowCustomUrlInput] = useState(false);
+  const [customApkUrl, setCustomApkUrl] = useState('');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('logiroute_custom_apk_url') || '';
+      setCustomApkUrl(stored);
+    }
+  }, []);
+
+  const handleSaveCustomApkUrl = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('logiroute_custom_apk_url', customApkUrl);
+      alert("Link do APK salvo com sucesso! O botão de download agora utilizará este endereço.");
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -88,6 +104,13 @@ export default function Header({
   };
 
   const getApkUrl = () => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('logiroute_custom_apk_url');
+      if (stored && stored.trim() !== '') {
+        return stored.trim();
+      }
+    }
+
     if (typeof window === 'undefined') return '/guarabira_acuracidade_v2.1.0.apk';
     const loc = window.location;
     
