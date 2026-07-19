@@ -1636,6 +1636,42 @@ async function startServer() {
     }
   });
 
+  // API Route to download the APK installer
+  app.get("/api/download/apk", async (req, res) => {
+    try {
+      const publicPath = path.join(process.cwd(), "public", "guarabira_acuracidade_v2.1.0.apk");
+      const distPath = path.join(process.cwd(), "dist", "guarabira_acuracidade_v2.1.0.apk");
+      
+      let targetPath = publicPath;
+      try {
+        await fs.stat(targetPath);
+      } catch (e) {
+        targetPath = distPath;
+        try {
+          await fs.stat(targetPath);
+        } catch (e2) {
+          console.error("Instalador APK não encontrado em nenhuma das pastas:", publicPath, distPath);
+          return res.status(404).send("Instalador APK não encontrado no servidor.");
+        }
+      }
+
+      console.log(`[APK Download] Enviando arquivo de: ${targetPath}`);
+      res.setHeader("Content-Disposition", 'attachment; filename="guarabira_acuracidade_v2.1.0.apk"');
+      res.setHeader("Content-Type", "application/vnd.android.package-archive");
+      res.sendFile(targetPath, (err) => {
+        if (err) {
+          console.error("Erro ao enviar arquivo APK via Express sendFile:", err);
+          if (!res.headersSent) {
+            res.status(500).send("Erro ao processar o download do arquivo APK.");
+          }
+        }
+      });
+    } catch (err: any) {
+      console.error("Erro crítico na API de download do APK:", err);
+      res.status(500).send("Erro interno ao processar download do APK.");
+    }
+  });
+
   // API Route to fetch photos
   app.get("/api/photos", async (req, res) => {
     try {

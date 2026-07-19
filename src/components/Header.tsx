@@ -43,22 +43,29 @@ export default function Header({
     setApkDownloading(true);
     setApkProgress(0);
     
+    // Trigger actual download of the static APK file hosted in public directory IMMEDIATELY
+    // using the robust back-end route with content-disposition and correct mime-type headers.
+    // This maintains the user-gesture context on mobile devices.
+    try {
+      const link = document.createElement('a');
+      link.href = '/api/download/apk';
+      link.setAttribute('download', 'guarabira_acuracidade_v2.1.0.apk');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (e) {
+      console.error("Erro ao iniciar download via link click:", e);
+      // Fallback method
+      window.location.href = '/api/download/apk';
+    }
+    
     const interval = setInterval(() => {
       setApkProgress(prev => {
         if (prev >= 100) {
           clearInterval(interval);
           setTimeout(() => {
             setApkDownloading(false);
-            
-            // Trigger actual download of the static APK file hosted in public directory
-            const link = document.createElement('a');
-            link.href = '/guarabira_acuracidade_v2.1.0.apk';
-            link.setAttribute('download', 'guarabira_acuracidade_v2.1.0.apk');
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            
-            alert("Sucesso: O download do instalador guarabira_acuracidade_v2.1.0.apk foi iniciado! Transfira e instale o arquivo em seu dispositivo Android para usar o módulo mobile.");
+            alert("Sucesso: O download do instalador guarabira_acuracidade_v2.1.0.apk foi iniciado! Caso não tenha começado automaticamente em seu celular, utilize o link de download direto.");
           }, 400);
           return 100;
         }
@@ -814,9 +821,9 @@ export default function Header({
 
               {/* Progress or Button */}
               {apkDownloading ? (
-                <div className="space-y-2.5 pt-2">
+                <div className="space-y-3 pt-2">
                   <div className="flex justify-between items-center text-xxs font-bold text-slate-700">
-                    <span className="flex items-center gap-1.5 animate-pulse">
+                    <span className="flex items-center gap-1.5 animate-pulse text-emerald-600">
                       ⏳ Baixando guarabira_acuracidade_v2.1.0.apk...
                     </span>
                     <span className="font-mono text-emerald-600">{apkProgress}%</span>
@@ -826,6 +833,15 @@ export default function Header({
                       className="bg-emerald-550 h-2.5 rounded-full transition-all duration-200" 
                       style={{ width: `${apkProgress}%` }}
                     />
+                  </div>
+                  <div className="text-center pt-1.5">
+                    <a
+                      href="/api/download/apk"
+                      download="guarabira_acuracidade_v2.1.0.apk"
+                      className="text-xxs font-extrabold text-emerald-600 hover:text-emerald-700 underline tracking-wider block"
+                    >
+                      Não iniciou? Clique aqui para baixar o arquivo diretamente
+                    </a>
                   </div>
                 </div>
               ) : (
