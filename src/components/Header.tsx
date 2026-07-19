@@ -49,13 +49,22 @@ export default function Header({
           clearInterval(interval);
           setTimeout(() => {
             setApkDownloading(false);
-            alert("Sucesso: guarabira_acuracidade_v2.1.0.apk baixado com sucesso! Transfira e instale o arquivo em seu dispositivo Android para usar o módulo mobile.");
+            
+            // Trigger actual download of the static APK file hosted in public directory
+            const link = document.createElement('a');
+            link.href = '/guarabira_acuracidade_v2.1.0.apk';
+            link.setAttribute('download', 'guarabira_acuracidade_v2.1.0.apk');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            alert("Sucesso: O download do instalador guarabira_acuracidade_v2.1.0.apk foi iniciado! Transfira e instale o arquivo em seu dispositivo Android para usar o módulo mobile.");
           }, 400);
           return 100;
         }
         return prev + 10;
       });
-    }, 180);
+    }, 120);
   };
 
   // Logo back to home action based on current user role
