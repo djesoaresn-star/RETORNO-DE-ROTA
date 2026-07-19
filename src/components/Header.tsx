@@ -34,21 +34,88 @@ export default function Header({
   const [showNotifications, setShowNotifications] = useState(false);
   const bellContainerRef = useRef<HTMLDivElement>(null);
 
-  // APK download states
+  // APK download and PWA states
   const [showApkModal, setShowApkModal] = useState(false);
   const [apkDownloading, setApkDownloading] = useState(false);
   const [apkProgress, setApkProgress] = useState(0);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isIframe, setIsIframe] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      // Detect if app is currently loaded inside an iframe (like AI Studio preview sandbox)
+      setIsIframe(window.self !== window.top);
+
+      const handleBeforeInstallPrompt = (e: Event) => {
+        e.preventDefault();
+        setDeferredPrompt(e);
+      };
+
+      window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      return () => {
+        window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      };
+    }
+  }, []);
+
+  const handleOpenStandalone = () => {
+    if (typeof window !== 'undefined') {
+      // Get the clean, full standalone URL without any iframe wrapping
+      const standaloneUrl = window.location.href;
+      window.open(standaloneUrl, '_blank');
+    }
+  };
+
+  const handleInstallPWA = async () => {
+    if (deferredPrompt) {
+      try {
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        console.log(`PWA installation choice: ${outcome}`);
+        setDeferredPrompt(null);
+      } catch (err) {
+        console.error("Failed to prompt PWA installation:", err);
+      }
+    } else {
+      alert(
+        "Instruções para Instalação no Celular:\n\n" +
+        "• No Android (Google Chrome):\n" +
+        "Clique nos três pontinhos (superior direito) e selecione 'Adicionar à tela inicial' ou 'Instalar aplicativo'.\n\n" +
+        "• No iOS / iPhone (Safari):\n" +
+        "Clique no botão de Compartilhar (ícone de quadrado com seta para cima) e selecione 'Adicionar à Tela de Início'."
+      );
+    }
+  };
+
+  const getApkUrl = () => {
+    if (typeof window === 'undefined') return '/guarabira_acuracidade_v2.1.0.apk';
+    const loc = window.location;
+    
+    // Check if hosted on GitHub Pages (or contains github.io)
+    if (loc.hostname.includes('github.io')) {
+      const pathParts = loc.pathname.split('/').filter(p => p !== '');
+      if (pathParts.length > 0) {
+        // The first segment of path is the GitHub repository name
+        const repoName = pathParts[0];
+        return `${loc.protocol}//${loc.host}/${repoName}/guarabira_acuracidade_v2.1.0.apk`;
+      }
+    }
+    
+    // Default to absolute root of the current host
+    return `${loc.protocol}//${loc.host}/guarabira_acuracidade_v2.1.0.apk`;
+  };
 
   const handleDownloadApk = () => {
     setApkDownloading(true);
     setApkProgress(0);
     
-    // Trigger actual download of the static APK file hosted in public directory IMMEDIATELY
-    // using the robust back-end route with content-disposition and correct mime-type headers.
-    // This maintains the user-gesture context on mobile devices.
+    const apkUrl = getApkUrl();
+    console.log("[APK Download] Iniciando download automático do APK de:", apkUrl);
+    
+    // Trigger actual download of the static APK file
     try {
       const link = document.createElement('a');
-      link.href = '/api/download/apk';
+      link.href = apkUrl;
       link.setAttribute('download', 'guarabira_acuracidade_v2.1.0.apk');
       document.body.appendChild(link);
       link.click();
@@ -56,7 +123,7 @@ export default function Header({
     } catch (e) {
       console.error("Erro ao iniciar download via link click:", e);
       // Fallback method
-      window.location.href = '/api/download/apk';
+      window.location.href = apkUrl;
     }
     
     const interval = setInterval(() => {
@@ -65,13 +132,22 @@ export default function Header({
           clearInterval(interval);
           setTimeout(() => {
             setApkDownloading(false);
-            alert("Sucesso: O download do instalador guarabira_acuracidade_v2.1.0.apk foi iniciado! Caso não tenha começado automaticamente em seu celular, utilize o link de download direto.");
           }, 400);
           return 100;
         }
         return prev + 10;
       });
     }, 120);
+  };
+
+  const handleHeaderApkClick = () => {
+    // Open the information modal
+    setShowApkModal(true);
+    
+    // Automatically trigger the real APK download instantly to provide a zero-click experience
+    setTimeout(() => {
+      handleDownloadApk();
+    }, 150);
   };
 
   // Logo back to home action based on current user role
@@ -290,7 +366,7 @@ export default function Header({
               {/* Baixar APK Mobile Button */}
               <button
                 id="download_apk_btn"
-                onClick={() => setShowApkModal(true)}
+                onClick={handleHeaderApkClick}
                 className="bg-emerald-655 hover:bg-emerald-700 border border-emerald-550 text-white p-2 px-3 rounded-lg transition-all flex items-center space-x-1.5 cursor-pointer shadow-sm mr-1.5 text-xs font-bold"
                 title="Baixar Aplicativo Mobile (APK)"
               >
@@ -768,17 +844,17 @@ export default function Header({
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white text-slate-900 rounded-2xl max-w-md w-full border border-slate-200 shadow-2xl overflow-hidden flex flex-col">
             {/* Header */}
-            <div className="bg-emerald-600 text-white p-5 flex items-center justify-between">
+            <div className="bg-slate-900 text-white p-5 flex items-center justify-between border-b border-slate-800">
               <div className="flex items-center space-x-2.5">
-                <div className="bg-emerald-500 text-white p-1.5 rounded-lg shadow-sm">
+                <div className="bg-amber-500 text-slate-950 p-1.5 rounded-lg shadow-sm">
                   <Smartphone className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="font-sans font-black text-sm sm:text-base leading-tight uppercase tracking-tight">
-                    Aplicativo Mobile (APK)
+                  <h3 className="font-sans font-black text-sm sm:text-base leading-tight uppercase tracking-tight text-amber-500">
+                    Aplicativo Mobile Oficial
                   </h3>
-                  <p className="text-[10px] text-emerald-100 font-mono font-medium">
-                    Guarabira Acuracidade • Versão 2.1.0
+                  <p className="text-[10px] text-slate-400 font-mono font-medium">
+                    Retorno de Rota Pau Brasil • PWA Mobile
                   </p>
                 </div>
               </div>
@@ -790,7 +866,7 @@ export default function Header({
                   }
                 }}
                 disabled={apkDownloading}
-                className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white p-1 px-2 rounded-lg transition text-xs font-bold font-mono border border-emerald-550 cursor-pointer"
+                className="bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 p-1.5 px-3 rounded-lg transition text-xs font-bold font-mono border border-slate-700 cursor-pointer"
               >
                 Fechar
               </button>
@@ -798,65 +874,113 @@ export default function Header({
 
             {/* Content */}
             <div className="p-6 space-y-5 font-sans">
-              <div className="space-y-2">
-                <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest block font-mono">
-                  📱 Mobilidade e Rapidez de Campo
-                </span>
-                <p className="text-xs text-slate-600 font-medium leading-relaxed">
-                  O aplicativo oficial para Android foi projetado para coletores de dados e smartphones, facilitando o trabalho dos conferentes de pátio na balança e no armazém.
-                </p>
-              </div>
-
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2.5 text-xxs">
-                <span className="font-extrabold text-slate-800 uppercase block tracking-wider">
-                  🚀 Recursos Principais Inclusos:
-                </span>
-                <ul className="space-y-1.5 text-slate-600 font-semibold list-disc list-inside">
-                  <li><strong>Abertura rápida de câmera</strong> para registrar fotos de evidência de faltas.</li>
-                  <li><strong>Modo Offline Completo</strong> para garantir funcionamento em áreas sem sinal.</li>
-                  <li><strong>Pesagem e Pesquisa de Placas</strong> integrada via Bluetooth com balanças.</li>
-                  <li><strong>Notificações instantâneas</strong> sobre solicitações de recontagem/reconferência.</li>
-                </ul>
-              </div>
-
-              {/* Progress or Button */}
-              {apkDownloading ? (
-                <div className="space-y-3 pt-2">
-                  <div className="flex justify-between items-center text-xxs font-bold text-slate-700">
-                    <span className="flex items-center gap-1.5 animate-pulse text-emerald-600">
-                      ⏳ Baixando guarabira_acuracidade_v2.1.0.apk...
+              
+              {isIframe ? (
+                // Inside AI Studio Preview Warning
+                <div className="space-y-4">
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
+                    <span className="text-xxs font-black text-amber-700 uppercase tracking-wider block font-mono">
+                      ⚠️ DETECTADO: Visualizador AI Studio
                     </span>
-                    <span className="font-mono text-emerald-600">{apkProgress}%</span>
+                    <p className="text-xs text-slate-700 font-semibold leading-relaxed">
+                      Você está visualizando a plataforma de teste do AI Studio. Navegadores bloqueiam downloads e instalação de aplicativos diretamente de dentro desse simulador por segurança.
+                    </p>
                   </div>
-                  <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-250">
-                    <div 
-                      className="bg-emerald-550 h-2.5 rounded-full transition-all duration-200" 
-                      style={{ width: `${apkProgress}%` }}
-                    />
+                  
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block font-mono">
+                      👉 Para instalar no Celular (Como um APK):
+                    </span>
+                    <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                      Clique no botão abaixo para abrir a sua plataforma <strong>Retorno de Rota</strong> original em tela cheia e independente de forma segura.
+                    </p>
                   </div>
-                  <div className="text-center pt-1.5">
-                    <a
-                      href="/api/download/apk"
-                      download="guarabira_acuracidade_v2.1.0.apk"
-                      className="text-xxs font-extrabold text-emerald-600 hover:text-emerald-700 underline tracking-wider block"
-                    >
-                      Não iniciou? Clique aqui para baixar o arquivo diretamente
-                    </a>
-                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleOpenStandalone}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-sans font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center space-x-2 border border-emerald-500 animate-pulse"
+                  >
+                    <span>Abrir Plataforma Independente</span>
+                  </button>
                 </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={handleDownloadApk}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-sans font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center space-x-2 border border-emerald-500"
-                >
-                  <Download className="h-4 w-4" />
-                  <span>Iniciar Download do Instalador APK</span>
-                </button>
+                // Standalone Mode - Real Installation
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest block font-mono">
+                      📱 PLATAFORMA MOBILE PRONTA
+                    </span>
+                    <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                      Instale a plataforma <strong>Retorno de Rota Pau Brasil</strong> diretamente no seu smartphone! Ela funcionará exatamente como um aplicativo APK nativo, em tela cheia, com ícone próprio e inicialização instantânea.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2.5 text-xxs">
+                    <span className="font-extrabold text-slate-800 uppercase block tracking-wider">
+                      🛠️ Passo a passo simples no Celular:
+                    </span>
+                    <div className="space-y-2 text-slate-600 font-semibold">
+                      <div className="flex items-start gap-1.5">
+                        <span className="text-emerald-600">🤖</span>
+                        <span>
+                          <strong>Android (Google Chrome):</strong> Clique no botão azul de instalação abaixo, ou toque nos 3 pontinhos no canto superior direito e selecione <strong>"Instalar aplicativo"</strong> ou <strong>"Adicionar à tela inicial"</strong>.
+                        </span>
+                      </div>
+                      <div className="flex items-start gap-1.5">
+                        <span className="text-amber-500">🍎</span>
+                        <span>
+                          <strong>iPhone (Safari):</strong> Toque no ícone de <strong>Compartilhar</strong> (quadrado com seta para cima) e escolha <strong>"Adicionar à Tela de Início"</strong>.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleInstallPWA}
+                    className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-sans font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center space-x-2 border border-blue-500"
+                  >
+                    <Smartphone className="h-4 w-4" />
+                    <span>Instalar Aplicativo Oficial</span>
+                  </button>
+                  
+                  <div className="relative flex py-1 items-center">
+                    <div className="flex-grow border-t border-slate-200"></div>
+                    <span className="flex-shrink mx-4 text-[9px] text-slate-400 font-mono font-bold uppercase tracking-wider">ou baixar instalador manual</span>
+                    <div className="flex-grow border-t border-slate-200"></div>
+                  </div>
+
+                  {apkDownloading ? (
+                    <div className="space-y-3 pt-1">
+                      <div className="flex justify-between items-center text-xxs font-bold text-slate-700">
+                        <span className="flex items-center gap-1.5 animate-pulse text-emerald-600">
+                          ⏳ Baixando guarabira_acuracidade_v2.1.0.apk...
+                        </span>
+                        <span className="font-mono text-emerald-600">{apkProgress}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200">
+                        <div 
+                          className="bg-emerald-500 h-2.5 rounded-full transition-all duration-200" 
+                          style={{ width: `${apkProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleDownloadApk}
+                      className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-sans font-bold text-[10px] uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center space-x-1.5 border border-slate-300"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      <span>Baixar Arquivo APK Alternativo</span>
+                    </button>
+                  )}
+                </div>
               )}
 
               <p className="text-[9px] text-slate-400 font-medium text-center italic leading-relaxed pt-1 border-t border-slate-100">
-                *Requer sistema operacional Android 8.0 (Oreo) ou superior. Ative a permissão de "Fontes Desconhecidas" no seu celular para proceder com a instalação manual.
+                *O aplicativo PWA é mais seguro, não exibe avisos de segurança no celular, consome menos memória e atualiza automaticamente em tempo real!
               </p>
             </div>
           </div>
