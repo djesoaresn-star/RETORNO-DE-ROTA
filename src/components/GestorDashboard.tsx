@@ -118,6 +118,11 @@ export default function GestorDashboard({
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [selectedValeIdForUpload, setSelectedValeIdForUpload] = useState<string | null>(null);
 
+  // States for prestadores ranking controls
+  const [rankingSortMetric, setRankingSortMetric] = useState<'valor' | 'itens' | 'viagens' | 'hecto'>('valor');
+  const [rankingRoleFilter, setRankingRoleFilter] = useState<'TODOS' | 'MOTORISTA' | 'AJUDANTE'>('TODOS');
+  const [rankingSearch, setRankingSearch] = useState('');
+
   // States for manual sobra registration
   const [showManualSobraForm, setShowManualSobraForm] = useState(false);
   const [manualSobraProdCode, setManualSobraProdCode] = useState('');
@@ -1028,6 +1033,7 @@ export default function GestorDashboard({
     totalMissingQty: number;
     totalSurplusQty: number;
     totalFinancialLoss: number;
+    totalHectos: number;
   }
 
   const driverStatsMap: Record<string, DriverStats> = {};
@@ -1042,7 +1048,8 @@ export default function GestorDashboard({
       divergentTrips: 0,
       totalMissingQty: 0,
       totalSurplusQty: 0,
-      totalFinancialLoss: 0
+      totalFinancialLoss: 0,
+      totalHectos: 0
     };
   });
 
@@ -1053,6 +1060,7 @@ export default function GestorDashboard({
     let missingQty = 0;
     let surplusQty = 0;
     let financialLoss = 0;
+    let auditHectos = 0;
 
     audit.items.forEach(item => {
       const physical = item.rePhysicalQty !== undefined ? item.rePhysicalQty : item.physicalQty;
@@ -1063,6 +1071,12 @@ export default function GestorDashboard({
         financialLoss += Math.abs(diff) * item.cost;
       } else if (diff > 0) {
         surplusQty += diff;
+      }
+
+      if (diff !== 0) {
+        const prod = products.find(p => p.code === item.productCode);
+        const hectoFactor = prod?.hectoFactor ?? 0;
+        auditHectos += Math.abs(diff) * hectoFactor;
       }
     });
 
@@ -1089,7 +1103,8 @@ export default function GestorDashboard({
           divergentTrips: 0,
           totalMissingQty: 0,
           totalSurplusQty: 0,
-          totalFinancialLoss: 0
+          totalFinancialLoss: 0,
+          totalHectos: 0
         };
       }
       
@@ -1100,6 +1115,7 @@ export default function GestorDashboard({
         d.totalMissingQty += missingQty;
         d.totalSurplusQty += surplusQty;
         d.totalFinancialLoss += financialLoss;
+        d.totalHectos += auditHectos;
       }
     };
 
@@ -1109,7 +1125,36 @@ export default function GestorDashboard({
 
   const rankedDrivers = Object.values(driverStatsMap)
     .filter(d => d.totalTrips > 0)
-    .sort((a, b) => b.divergentTrips - a.divergentTrips || b.totalFinancialLoss - a.totalFinancialLoss);
+    .filter(d => {
+      if (rankingRoleFilter === 'MOTORISTA') return d.role === 'MOTORISTA';
+      if (rankingRoleFilter === 'AJUDANTE') return d.role === 'AJUDANTE';
+      return true;
+    })
+    .filter(d => {
+      if (!rankingSearch.trim()) return true;
+      const q = rankingSearch.toLowerCase();
+      return d.name.toLowerCase().includes(q) || d.id.toLowerCase().includes(q);
+    })
+    .sort((a, b) => {
+      if (rankingSortMetric === 'valor') {
+        const diffLoss = b.totalFinancialLoss - a.totalFinancialLoss;
+        if (diffLoss !== 0) return diffLoss;
+        return (b.totalMissingQty + b.totalSurplusQty) - (a.totalMissingQty + a.totalSurplusQty);
+      } else if (rankingSortMetric === 'itens') {
+        const diffQty = (b.totalMissingQty + b.totalSurplusQty) - (a.totalMissingQty + a.totalSurplusQty);
+        if (diffQty !== 0) return diffQty;
+        return b.totalFinancialLoss - a.totalFinancialLoss;
+      } else if (rankingSortMetric === 'viagens') {
+        const diffTrips = b.divergentTrips - a.divergentTrips;
+        if (diffTrips !== 0) return diffTrips;
+        return b.totalFinancialLoss - a.totalFinancialLoss;
+      } else if (rankingSortMetric === 'hecto') {
+        const diffHectos = b.totalHectos - a.totalHectos;
+        if (diffHectos !== 0) return diffHectos;
+        return b.totalFinancialLoss - a.totalFinancialLoss;
+      }
+      return 0;
+    });
 
   // Productivity by Conferente
   const confProductivity: Record<string, { 
@@ -2247,75 +2292,448 @@ export default function GestorDashboard({
             
             {/* Prestadores de Contas Discrepancy Ranking */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6" id="ranking_prestadores">
-              <h3 className="font-sans font-bold text-base text-slate-900 mb-1 flex items-center space-x-2">
-                <AlertTriangle className="h-5 w-5 text-amber-500" />
-                <span>Ranking de Prestadores de Contas com Divergências</span>
-              </h3>
-              <p className="text-xxs text-slate-400 mb-6">Visualização consolidada de motoristas e ajudantes com maior índice de desvios físicos/fiscais e passivo financeiro acumulado.</p>
+              
+              {/* Header section with titles and Export Report action */}
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6 border-b border-slate-100 pb-5">
+                <div>
+                  <h3 className="font-sans font-bold text-base text-slate-900 flex items-center space-x-2">
+                    <TrendingUp className="h-5 w-5 text-amber-600 animate-pulse" />
+                    <span>Ranking Avançado de Prestadores de Contas (Divergências)</span>
+                  </h3>
+                  <p className="text-xxs text-slate-400 mt-1">
+                    Análise e auditoria de conformidade de motoristas e ajudantes baseada no passivo financeiro, quantidade de desvios, volume líquido (HL) e viagens realizadas.
+                  </p>
+                </div>
+                
+                {/* Print/Export report button */}
+                <button
+                  onClick={() => {
+                    const printWindow = window.open('', '_blank');
+                    if (printWindow) {
+                      const listHtml = rankedDrivers.map((item, idx) => {
+                        const compliance = item.totalTrips > 0 ? ((item.totalTrips - item.divergentTrips) / item.totalTrips) * 100 : 100;
+                        return `
+                          <tr style="border-bottom: 1px solid #e2e8f0; font-family: monospace; font-size: 12px;">
+                            <td style="padding: 8px; font-weight: bold;">${idx + 1}º</td>
+                            <td style="padding: 8px;">${item.name} (${item.role})</td>
+                            <td style="padding: 8px; text-align: center;">${item.totalTrips}</td>
+                            <td style="padding: 8px; text-align: center; color: #dc2626; font-weight: bold;">${item.divergentTrips}</td>
+                            <td style="padding: 8px; text-align: center;">${item.totalMissingQty} un</td>
+                            <td style="padding: 8px; text-align: right; font-weight: bold; color: ${item.totalFinancialLoss > 0 ? '#b91c1c' : '#047857'}">
+                              ${item.totalFinancialLoss > 0 ? `-R$ ${item.totalFinancialLoss.toFixed(2)}` : 'R$ 0,00'}
+                            </td>
+                            <td style="padding: 8px; text-align: center; font-weight: bold; color: #0284c7;">${item.totalHectos.toFixed(2)} HL</td>
+                            <td style="padding: 8px; text-align: right; font-weight: bold; color: ${compliance >= 85 ? '#059669' : compliance >= 60 ? '#d97706' : '#dc2626'}">
+                              ${compliance.toFixed(1)}%
+                            </td>
+                          </tr>
+                        `;
+                      }).join('');
+
+                      printWindow.document.write(`
+                        <html>
+                          <head>
+                            <title>Relatório de Desvios de Prestadores - LogiRoute</title>
+                            <style>
+                              body { font-family: 'Inter', sans-serif; color: #1e293b; padding: 24px; }
+                              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                              th { background-color: #f1f5f9; padding: 10px; text-align: left; font-size: 11px; text-transform: uppercase; border-bottom: 2px solid #cbd5e1; }
+                              .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; }
+                              .kpi-container { display: flex; gap: 16px; margin: 20px 0; }
+                              .kpi { flex: 1; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #f8fafc; }
+                              .kpi-title { font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: bold; }
+                              .kpi-val { font-size: 18px; font-weight: bold; margin-top: 4px; }
+                            </style>
+                          </head>
+                          <body>
+                            <div class="header">
+                              <div>
+                                <h1 style="margin: 0; font-size: 20px; font-weight: bold; letter-spacing: -0.5px;">LogiRoute Inteligência</h1>
+                                <p style="margin: 4px 0 0 0; font-size: 12px; color: #64748b;">Relatório Operacional de Conformidade de Prestadores</p>
+                              </div>
+                              <div style="font-size: 11px; text-align: right; color: #64748b;">
+                                Emitido em: ${new Date().toLocaleString('pt-BR')}<br>
+                                Filtro: ${rankingRoleFilter === 'TODOS' ? 'Todos' : rankingRoleFilter === 'MOTORISTA' ? 'Apenas Motoristas' : 'Apenas Ajudantes'} | Ordenado por: ${rankingSortMetric === 'valor' ? 'Valor Financeiro' : rankingSortMetric === 'itens' ? 'Quantidade Itens' : rankingSortMetric === 'viagens' ? 'Viagens Divergentes' : 'Hectolitros'}
+                              </div>
+                            </div>
+
+                            <div class="kpi-container">
+                              <div class="kpi">
+                                <div class="kpi-title">Total de Colaboradores</div>
+                                <div class="kpi-val">${rankedDrivers.length}</div>
+                              </div>
+                              <div class="kpi">
+                                <div class="kpi-title">Atingimento Médio do Grupo</div>
+                                <div class="kpi-val">
+                                  ${(rankedDrivers.reduce((acc, curr) => acc + (curr.totalTrips > 0 ? ((curr.totalTrips - curr.divergentTrips) / curr.totalTrips) * 100 : 100), 0) / (rankedDrivers.length || 1)).toFixed(1)}%
+                                </div>
+                              </div>
+                              <div class="kpi">
+                                <div class="kpi-title">Passivo Financeiro Total</div>
+                                <div class="kpi-val" style="color: #dc2626;">
+                                  R$ ${rankedDrivers.reduce((acc, curr) => acc + curr.totalFinancialLoss, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </div>
+                              </div>
+                              <div class="kpi">
+                                <div class="kpi-title">Total Desvio Hectolitros</div>
+                                <div class="kpi-val" style="color: #0284c7;">
+                                  ${rankedDrivers.reduce((acc, curr) => acc + curr.totalHectos, 0).toFixed(2)} HL
+                                </div>
+                              </div>
+                            </div>
+
+                            <table>
+                              <thead>
+                                <tr>
+                                  <th style="width: 5%">Pos</th>
+                                  <th style="width: 35%">Prestador de Contas</th>
+                                  <th style="text-align: center; width: 10%">Viagens</th>
+                                  <th style="text-align: center; width: 10%">Com Desvio</th>
+                                  <th style="text-align: center; width: 10%">Faltas Físicas</th>
+                                  <th style="text-align: right; width: 10%">Valor Passivo</th>
+                                  <th style="text-align: center; width: 10%">Desvio HL</th>
+                                  <th style="text-align: right; width: 10%">Atingimento</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                ${listHtml}
+                              </tbody>
+                            </table>
+                            <script>window.print();</script>
+                          </body>
+                        </html>
+                      `);
+                      printWindow.document.close();
+                    } else {
+                      alert('Bloqueador de popups detectado! Por favor, autorize popups para abrir a visão formatada do relatório.');
+                    }
+                  }}
+                  className="flex items-center space-x-1.5 bg-slate-900 text-white hover:bg-slate-800 transition-colors px-3 py-1.5 rounded-lg text-xxs font-semibold font-sans uppercase tracking-wider shadow-xs"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  <span>Imprimir Relatório Formatado</span>
+                </button>
+              </div>
+
+              {/* Dynamic KPI Cards above table for selected cohort */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-slate-50 border border-slate-150 p-3 rounded-lg flex flex-col justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block font-mono">Total Filtrado</span>
+                  <div className="mt-1 flex items-baseline justify-between">
+                    <span className="text-xl font-extrabold text-slate-800 font-mono">{rankedDrivers.length}</span>
+                    <span className="text-xxs text-slate-400 font-sans">colaboradores</span>
+                  </div>
+                </div>
+                
+                <div className="bg-slate-50 border border-slate-150 p-3 rounded-lg flex flex-col justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block font-mono">Atingimento Médio</span>
+                  <div className="mt-1 flex items-baseline justify-between">
+                    <span className="text-xl font-extrabold text-slate-800 font-mono">
+                      {(rankedDrivers.reduce((acc, curr) => acc + (curr.totalTrips > 0 ? ((curr.totalTrips - curr.divergentTrips) / curr.totalTrips) * 100 : 100), 0) / (rankedDrivers.length || 1)).toFixed(1)}%
+                    </span>
+                    <span className="text-xxs font-bold text-emerald-600 font-sans">Sem Desvios</span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-150 p-3 rounded-lg flex flex-col justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block font-mono">Passivo Acumulado</span>
+                  <div className="mt-1 flex items-baseline justify-between">
+                    <span className="text-xl font-extrabold text-red-700 font-mono">
+                      R$ {rankedDrivers.reduce((acc, curr) => acc + curr.totalFinancialLoss, 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
+                    </span>
+                    <span className="text-xxs text-red-500 font-sans font-semibold">Prejuízo</span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-150 p-3 rounded-lg flex flex-col justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block font-mono">Desvio Volumétrico</span>
+                  <div className="mt-1 flex items-baseline justify-between">
+                    <span className="text-xl font-extrabold text-sky-700 font-mono">
+                      {rankedDrivers.reduce((acc, curr) => acc + curr.totalHectos, 0).toFixed(1)}
+                    </span>
+                    <span className="text-xxs text-slate-500 font-sans font-semibold">Hectolitros (HL)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Advanced Filter, Search and Sorting Control Panel */}
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-6 space-y-4">
+                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                  
+                  {/* Left: Role Pill Buttons */}
+                  <div className="flex items-center space-x-1.5 flex-wrap">
+                    <span className="text-xxs font-bold text-slate-500 uppercase font-sans tracking-wider mr-1">Filtrar Função:</span>
+                    <button
+                      onClick={() => setRankingRoleFilter('TODOS')}
+                      className={`px-3 py-1 rounded-full text-xxs font-bold transition-all font-sans ${
+                        rankingRoleFilter === 'TODOS'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      Todos
+                    </button>
+                    <button
+                      onClick={() => setRankingRoleFilter('MOTORISTA')}
+                      className={`px-3 py-1 rounded-full text-xxs font-bold transition-all font-sans flex items-center space-x-1 ${
+                        rankingRoleFilter === 'MOTORISTA'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span>👨‍✈️ Motoristas</span>
+                    </button>
+                    <button
+                      onClick={() => setRankingRoleFilter('AJUDANTE')}
+                      className={`px-3 py-1 rounded-full text-xxs font-bold transition-all font-sans flex items-center space-x-1 ${
+                        rankingRoleFilter === 'AJUDANTE'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span>👤 Ajudantes</span>
+                    </button>
+                  </div>
+
+                  {/* Right: Realtime Name/Matricula Search Input */}
+                  <div className="relative w-full xl:w-72">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                      <Search className="h-3.5 w-3.5 text-slate-400" />
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="Buscar por colaborador ou matrícula..."
+                      value={rankingSearch}
+                      onChange={(e) => setRankingSearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xxs focus:outline-hidden focus:border-slate-400 font-sans font-medium text-slate-700 shadow-xxs placeholder-slate-400"
+                    />
+                  </div>
+
+                </div>
+
+                {/* Second row: Sort metric tabs. Fully meets requirements "por quantidade de item, por quantidade viagem, por hecto" */}
+                <div className="border-t border-slate-200/60 pt-3">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+                    <span className="text-xxs font-bold text-slate-500 uppercase font-sans tracking-wider">
+                      Métrica de Ordenação (Critério Principal):
+                    </span>
+                    
+                    <div className="flex flex-wrap gap-1 bg-slate-200/60 p-1 rounded-lg">
+                      <button
+                        onClick={() => setRankingSortMetric('valor')}
+                        className={`px-2.5 py-1 rounded-md text-xxs font-bold transition-all font-sans flex items-center space-x-1.5 ${
+                          rankingSortMetric === 'valor'
+                            ? 'bg-white text-red-700 shadow-xs border border-slate-200'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <Landmark className="h-3 w-3" />
+                        <span>Passivo Gerado (R$)</span>
+                      </button>
+
+                      <button
+                        onClick={() => setRankingSortMetric('itens')}
+                        className={`px-2.5 py-1 rounded-md text-xxs font-bold transition-all font-sans flex items-center space-x-1.5 ${
+                          rankingSortMetric === 'itens'
+                            ? 'bg-white text-amber-800 shadow-xs border border-slate-200'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <Box className="h-3 w-3" />
+                        <span>Quantidade de Itens</span>
+                      </button>
+
+                      <button
+                        onClick={() => setRankingSortMetric('viagens')}
+                        className={`px-2.5 py-1 rounded-md text-xxs font-bold transition-all font-sans flex items-center space-x-1.5 ${
+                          rankingSortMetric === 'viagens'
+                            ? 'bg-white text-indigo-700 shadow-xs border border-slate-200'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <Truck className="h-3 w-3" />
+                        <span>Viagens Divergentes</span>
+                      </button>
+
+                      <button
+                        onClick={() => setRankingSortMetric('hecto')}
+                        className={`px-2.5 py-1 rounded-md text-xxs font-bold transition-all font-sans flex items-center space-x-1.5 ${
+                          rankingSortMetric === 'hecto'
+                            ? 'bg-white text-sky-800 shadow-xs border border-slate-200'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <Layers className="h-3 w-3" />
+                        <span>Volume Hectolitros (HL)</span>
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-2 text-[10px] text-slate-400 italic">
+                    {rankingSortMetric === 'valor' && "💡 Ordenando pelo total do passivo gerado (prejuízo). Critério de desempate: Quantidade física de desvios."}
+                    {rankingSortMetric === 'itens' && "💡 Ordenando pela quantidade absoluta de itens físicos divergentes (faltas + sobras). Critério de desempate: Passivo financeiro."}
+                    {rankingSortMetric === 'viagens' && "💡 Ordenando pela quantidade de viagens que retornaram com desvio. Critério de desempate: Passivo financeiro."}
+                    {rankingSortMetric === 'hecto' && "💡 Ordenando pelo volume desvios convertido em Hectolitros (HL - líquidos). Critério de desempate: Passivo financeiro."}
+                  </div>
+                </div>
+
+              </div>
 
               {rankedDrivers.length === 0 ? (
-                <div className="text-center py-12 bg-slate-50 rounded-lg text-slate-400 text-xs">
-                  Sem histórico de viagens finalizadas para calcular o ranking de divergências.
+                <div className="text-center py-12 bg-slate-50 border border-dashed rounded-lg text-slate-400 text-xs">
+                  Sem correspondências de prestadores de contas com divergências para os filtros e busca informados.
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left divide-y divide-slate-100 text-xs">
-                    <thead className="bg-slate-50">
+                <div className="overflow-x-auto border border-slate-150 rounded-lg shadow-xxs">
+                  <table className="min-w-full text-left divide-y divide-slate-150 text-xs font-sans">
+                    <thead className="bg-slate-50 font-semibold text-slate-600 border-b border-slate-250">
                       <tr>
-                        <th className="px-3 py-2.5 font-bold text-slate-500 uppercase">Colaborador / Função</th>
-                        <th className="px-3 py-2.5 font-bold text-slate-500 uppercase text-center">Viagens Totais</th>
-                        <th className="px-3 py-2.5 font-bold text-slate-500 uppercase text-center text-red-600 bg-red-50/50">Viagens c/ Desvio</th>
-                        <th className="px-3 py-2.5 font-bold text-slate-500 uppercase text-center">Faltas Físicas</th>
-                        <th className="px-3 py-2.5 font-bold text-slate-500 uppercase text-right">Passivo Gerado</th>
+                        <th className="px-4 py-3 text-center" style={{ width: '6%' }}>Rank</th>
+                        <th className="px-4 py-3">Colaborador / Função</th>
+                        <th className="px-3 py-3 text-center" style={{ width: '12%' }}>Viagens Totais</th>
+                        
+                        {/* Highlight sorted column header dynamically */}
+                        <th className={`px-3 py-3 text-center transition-all ${rankingSortMetric === 'viagens' ? 'bg-indigo-50/70 font-extrabold text-indigo-900' : ''}`} style={{ width: '14%' }}>
+                          Viagens c/ Desvio
+                        </th>
+                        
+                        <th className={`px-3 py-3 text-center transition-all ${rankingSortMetric === 'itens' ? 'bg-amber-50/70 font-extrabold text-amber-900' : ''}`} style={{ width: '12%' }}>
+                          Faltas / Sobras
+                        </th>
+
+                        <th className={`px-3 py-3 text-center transition-all ${rankingSortMetric === 'hecto' ? 'bg-sky-50/70 font-extrabold text-sky-900' : ''}`} style={{ width: '12%' }}>
+                          Volume (HL)
+                        </th>
+                        
+                        <th className={`px-4 py-3 text-right transition-all ${rankingSortMetric === 'valor' ? 'bg-red-50/50 font-extrabold text-red-900' : ''}`} style={{ width: '14%' }}>
+                          Passivo Gerado
+                        </th>
+                        
+                        <th className="px-4 py-3 text-center bg-slate-100/50 font-extrabold text-slate-700" style={{ width: '20%' }}>
+                          Atingimento (Qualidade)
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
                       {rankedDrivers.map((item, idx) => {
+                        const perfectTrips = item.totalTrips - item.divergentTrips;
+                        const complianceRate = item.totalTrips > 0 ? (perfectTrips / item.totalTrips) * 100 : 100;
                         const divRate = item.totalTrips > 0 ? (item.divergentTrips / item.totalTrips) * 100 : 0;
-                        const isHighRisk = divRate > 50 && item.divergentTrips > 0;
+                        const isHighRisk = complianceRate < 60 && item.divergentTrips > 0;
+
+                        // Premium Rank Badge Style
+                        let rankBadgeClass = "bg-slate-100 text-slate-600 border-slate-200";
+                        let rankText = `${idx + 1}º`;
+                        if (idx === 0) rankBadgeClass = "bg-amber-100 text-amber-800 border-amber-300 font-extrabold shadow-xxs ring-1 ring-amber-400/20";
+                        else if (idx === 1) rankBadgeClass = "bg-slate-200 text-slate-800 border-slate-300 font-bold shadow-xxs";
+                        else if (idx === 2) rankBadgeClass = "bg-orange-100 text-orange-800 border-orange-200 font-bold shadow-xxs";
                         
                         return (
-                          <tr key={item.id} className={`hover:bg-slate-50/80 transition-colors ${isHighRisk ? 'bg-red-50/10' : ''}`}>
-                            <td className="px-3 py-3 font-semibold text-slate-800">
-                              <div className="flex items-center space-x-2">
-                                <span className="font-mono text-[10px] text-slate-400 bg-slate-150 px-1.5 py-0.5 rounded">
-                                  {idx + 1}º
+                          <tr key={item.id} className={`hover:bg-slate-50/80 transition-all ${isHighRisk ? 'bg-red-50/5' : ''}`}>
+                            
+                            {/* Position */}
+                            <td className="px-4 py-3 text-center whitespace-nowrap">
+                              <span className={`inline-flex items-center justify-center px-2 py-0.5 text-xxs font-mono rounded-md border ${rankBadgeClass}`}>
+                                {idx < 3 && <Sparkles className="h-2.5 w-2.5 mr-0.5 text-amber-600" />}
+                                {rankText}
+                              </span>
+                            </td>
+
+                            {/* Collaborator */}
+                            <td className="px-4 py-3">
+                              <div>
+                                <span className="block font-bold text-slate-800 font-sans tracking-tight leading-tight">
+                                  {item.name}
                                 </span>
-                                <div>
-                                  <span className="block leading-tight font-sans font-bold">{item.name}</span>
-                                  <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest block mt-0.5">
-                                    {item.role === 'MOTORISTA' ? '👨‍✈️ Motorista' : '👤 Ajudante'} (Matr: {item.id})
-                                  </span>
-                                </div>
+                                <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest block mt-0.5">
+                                  {item.role === 'MOTORISTA' ? '👨‍✈️ Motorista' : '👤 Ajudante'} (Matrícula: {item.id})
+                                </span>
                               </div>
                             </td>
+
+                            {/* Total Trips */}
                             <td className="px-3 py-3 text-center font-mono font-bold text-slate-700">
                               {item.totalTrips}
                             </td>
-                            <td className="px-3 py-3 text-center font-mono font-bold text-red-600 bg-red-50/15">
-                              {item.divergentTrips} 
-                              <span className="text-[10px] font-normal text-slate-400 ml-1.5">({divRate.toFixed(0)}%)</span>
-                              
-                              {/* Small health gauge */}
-                              <div className="w-16 bg-slate-100 h-1.5 rounded-full mx-auto mt-1 overflow-hidden border">
+
+                            {/* Divergent Trips */}
+                            <td className={`px-3 py-3 text-center font-mono transition-all ${rankingSortMetric === 'viagens' ? 'bg-indigo-50/30 font-bold text-indigo-700' : 'text-slate-600'}`}>
+                              <span className={`px-1.5 py-0.5 rounded-sm ${item.divergentTrips > 0 ? 'bg-red-100/60 text-red-700 font-bold' : 'bg-slate-100 text-slate-500'}`}>
+                                {item.divergentTrips}
+                              </span>
+                              <span className="text-[9px] text-slate-400 block mt-1">({divRate.toFixed(0)}% desvios)</span>
+                            </td>
+
+                            {/* Physical Missing/Surplus Quantity */}
+                            <td className={`px-3 py-3 text-center font-mono transition-all ${rankingSortMetric === 'itens' ? 'bg-amber-50/30 font-bold text-amber-800' : 'text-slate-600'}`}>
+                              <div className="font-semibold text-slate-800">
+                                {item.totalMissingQty + item.totalSurplusQty} un
+                              </div>
+                              <div className="text-[9px] text-slate-400 mt-0.5 flex items-center justify-center space-x-1">
+                                <span className="text-rose-600">-{item.totalMissingQty} faltas</span>
+                                <span>/</span>
+                                <span className="text-emerald-600">+{item.totalSurplusQty} sobras</span>
+                              </div>
+                            </td>
+
+                            {/* Hectoliters Deviation */}
+                            <td className={`px-3 py-3 text-center font-mono transition-all ${rankingSortMetric === 'hecto' ? 'bg-sky-50/30 font-bold text-sky-800' : 'text-slate-600'}`}>
+                              <span className="font-bold text-sky-700">
+                                {item.totalHectos.toFixed(2)} <span className="text-[9px] font-normal text-slate-400">HL</span>
+                              </span>
+                              <div className="w-12 bg-slate-100 h-1 rounded-full mx-auto mt-1.5 overflow-hidden">
                                 <div 
-                                  className="bg-red-600 h-full rounded-full" 
-                                  style={{ width: `${Math.min(100, divRate)}%` }}
+                                  className="bg-sky-500 h-full rounded-full" 
+                                  style={{ width: `${Math.min(100, item.totalHectos * 10)}%` }} // Scaling for micro visualization
                                 />
                               </div>
                             </td>
-                            <td className="px-3 py-3 text-center font-mono text-slate-600">
-                              {item.totalMissingQty} un
-                            </td>
-                            <td className="px-3 py-3 text-right font-mono font-extrabold text-slate-900">
+
+                            {/* Financial Passive */}
+                            <td className={`px-4 py-3 text-right font-mono transition-all ${rankingSortMetric === 'valor' ? 'bg-red-50/20' : ''}`}>
                               {item.totalFinancialLoss > 0 ? (
-                                <span className="text-red-700">
+                                <div className="text-red-700 font-extrabold text-xs">
                                   -R$ {item.totalFinancialLoss.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                </span>
+                                </div>
                               ) : (
-                                <span className="text-emerald-700">R$ 0,00</span>
+                                <div className="text-emerald-700 font-bold text-xs">R$ 0,00</div>
                               )}
+                              <span className="text-[9px] text-slate-400 block mt-0.5">passivo fiscal</span>
                             </td>
+
+                            {/* Graphic Percentual de Atingimento */}
+                            <td className="px-4 py-3 bg-slate-50/40">
+                              <div className="space-y-1 max-w-[140px] mx-auto">
+                                <div className="flex items-center justify-between text-[10px] font-semibold">
+                                  <span className={`px-1.5 py-0.5 rounded-sm font-mono text-xxs font-bold ${
+                                    complianceRate >= 85 ? 'bg-emerald-100 text-emerald-800' :
+                                    complianceRate >= 60 ? 'bg-amber-100 text-amber-800' :
+                                    'bg-red-100 text-red-800'
+                                  }`}>
+                                    {complianceRate.toFixed(1)}%
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 font-medium font-mono">
+                                    {perfectTrips}/{item.totalTrips} OK
+                                  </span>
+                                </div>
+                                
+                                {/* Micro visual bar of compliance */}
+                                <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden border border-slate-300/40 shadow-inner">
+                                  <div 
+                                    className={`h-full rounded-full transition-all duration-500 ${
+                                      complianceRate >= 85 ? 'bg-emerald-500' :
+                                      complianceRate >= 60 ? 'bg-amber-500' :
+                                      'bg-rose-500'
+                                    }`} 
+                                    style={{ width: `${complianceRate}%` }}
+                                  />
+                                </div>
+                                <span className="text-[8px] text-slate-400 text-center block leading-none">
+                                  {complianceRate >= 85 ? 'Atingimento Ótimo' : complianceRate >= 60 ? 'Atenção Operacional' : 'Risco de Conformidade'}
+                                </span>
+                              </div>
+                            </td>
+
                           </tr>
                         );
                       })}
