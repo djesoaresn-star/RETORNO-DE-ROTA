@@ -104,36 +104,23 @@ export class ImageDB {
 
     // Attempt instant replication to the server with confirmation
     try {
+      let isSynced = false;
+      let syncedPhotoData: any = null;
+
       if (isClientFirebaseActive()) {
         const firestoreDb = getClientFirestore();
         if (firestoreDb) {
-          const photoDocRef = doc(firestoreDb, "photos", newRecord.id);
-          await setDoc(photoDocRef, newRecord);
-          
-          const syncedRecord: PhotoRecord = {
-            ...newRecord,
-            syncPending: false
-          };
-
-          if (this.isInMemoryFallback || !db) {
-            this.memoryStore.set(syncedRecord.id, syncedRecord);
-          } else {
-            try {
-              await new Promise<void>((resolve) => {
-                const transaction = db.transaction(STORE_NAME, 'readwrite');
-                const store = transaction.objectStore(STORE_NAME);
-                const request = store.put(syncedRecord);
-                request.onsuccess = request.onerror = () => resolve();
-              });
-            } catch (err) {
-              this.memoryStore.set(syncedRecord.id, syncedRecord);
-            }
+          try {
+            const photoDocRef = doc(firestoreDb, "photos", newRecord.id);
+            await setDoc(photoDocRef, newRecord);
+            isSynced = true;
+          } catch (fsErr) {
+            console.warn('[ImageDB] Falha na gravação direta do Firestore para nova foto. Tentando fallback via API do servidor...', fsErr);
           }
-          
-          window.dispatchEvent(new CustomEvent('logiroute_photos_updated'));
-          return syncedRecord;
         }
-      } else {
+      }
+
+      if (!isSynced) {
         const res = await fetch('/api/photos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -142,31 +129,36 @@ export class ImageDB {
         if (res.ok) {
           const data = await res.json();
           if (data.success && data.photo) {
-            // Success! Replace the local record with the synced record (containing Storage URL and syncPending: false)
-            const syncedRecord: PhotoRecord = {
-              ...data.photo,
-              syncPending: false
-            };
-
-            if (this.isInMemoryFallback || !db) {
-              this.memoryStore.set(syncedRecord.id, syncedRecord);
-            } else {
-              try {
-                await new Promise<void>((resolve) => {
-                  const transaction = db.transaction(STORE_NAME, 'readwrite');
-                  const store = transaction.objectStore(STORE_NAME);
-                  const request = store.put(syncedRecord);
-                  request.onsuccess = request.onerror = () => resolve();
-                });
-              } catch (err) {
-                this.memoryStore.set(syncedRecord.id, syncedRecord);
-              }
-            }
-            
-            window.dispatchEvent(new CustomEvent('logiroute_photos_updated'));
-            return syncedRecord;
+            syncedPhotoData = data.photo;
+            isSynced = true;
           }
         }
+      }
+
+      if (isSynced) {
+        // Success! Replace the local record with the synced record (containing Storage URL and syncPending: false)
+        const syncedRecord: PhotoRecord = {
+          ...(syncedPhotoData || newRecord),
+          syncPending: false
+        };
+
+        if (this.isInMemoryFallback || !db) {
+          this.memoryStore.set(syncedRecord.id, syncedRecord);
+        } else {
+          try {
+            await new Promise<void>((resolve) => {
+              const transaction = db.transaction(STORE_NAME, 'readwrite');
+              const store = transaction.objectStore(STORE_NAME);
+              const request = store.put(syncedRecord);
+              request.onsuccess = request.onerror = () => resolve();
+            });
+          } catch (err) {
+            this.memoryStore.set(syncedRecord.id, syncedRecord);
+          }
+        }
+        
+        window.dispatchEvent(new CustomEvent('logiroute_photos_updated'));
+        return syncedRecord;
       }
     } catch (e) {
       console.warn('Replication failed. Photo will be synchronized automatically in background.', e);
@@ -190,12 +182,37 @@ export class ImageDB {
       
       for (const p of pending) {
         try {
+          let isSynced = false;
+          let syncedPhotoData: any = null;
+
           if (isClientFB && firestoreDb) {
-            const photoDocRef = doc(firestoreDb, "photos", p.id);
-            await setDoc(photoDocRef, p);
-            
+            try {
+              const photoDocRef = doc(firestoreDb, "photos", p.id);
+              await setDoc(photoDocRef, p);
+              isSynced = true;
+            } catch (fsErr) {
+              console.warn(`[ImageDB] Falha na gravação direta do Firestore para foto pendente ${p.id}. Tentando fallback via API do servidor...`, fsErr);
+            }
+          }
+
+          if (!isSynced) {
+            const res = await fetch('/api/photos', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ photo: p })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.success && data.photo) {
+                syncedPhotoData = data.photo;
+                isSynced = true;
+              }
+            }
+          }
+
+          if (isSynced) {
             const syncedRecord: PhotoRecord = {
-              ...p,
+              ...(syncedPhotoData || p),
               syncPending: false
             };
             
@@ -208,32 +225,6 @@ export class ImageDB {
                 const request = store.put(syncedRecord);
                 request.onsuccess = request.onerror = () => resolve();
               });
-            }
-          } else if (!isClientFB) {
-            const res = await fetch('/api/photos', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ photo: p })
-            });
-            if (res.ok) {
-              const data = await res.json();
-              if (data.success && data.photo) {
-                const syncedRecord: PhotoRecord = {
-                  ...data.photo,
-                  syncPending: false
-                };
-                
-                if (this.isInMemoryFallback || !db) {
-                  this.memoryStore.set(syncedRecord.id, syncedRecord);
-                } else {
-                  await new Promise<void>((resolve) => {
-                    const transaction = db.transaction(STORE_NAME, 'readwrite');
-                    const store = transaction.objectStore(STORE_NAME);
-                    const request = store.put(syncedRecord);
-                    request.onsuccess = request.onerror = () => resolve();
-                  });
-                }
-              }
             }
           }
         } catch (err) {

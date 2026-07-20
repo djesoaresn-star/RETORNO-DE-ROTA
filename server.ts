@@ -1636,6 +1636,12 @@ async function startServer() {
     }
   });
 
+  // Direct APK Route Interceptor to force download instead of text rendering in browser
+  app.get("/guarabira_acuracidade_v2.1.0.apk", (req, res) => {
+    console.log("[Direct APK Request] Interceptando e redirecionando para API de download seguro...");
+    res.redirect("/api/download/apk");
+  });
+
   // API Route to download the APK installer
   app.get("/api/download/apk", async (req, res) => {
     try {

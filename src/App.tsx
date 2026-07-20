@@ -123,15 +123,10 @@ export default function App() {
       if (payloadKeys.length > 0) {
         let success = false;
         
-        if (isClientFirebaseActive()) {
-          try {
-            success = await saveDirectlyToFirestore(payload);
-          } catch (err) {
-            console.error('[ClientFirebase] Erro ao sincronizar diretamente com o Firestore:', err);
-          }
-        } else {
+        const saveToServer = async (pld: any) => {
           let attempts = 3;
           let delay = 500;
+          let srvSuccess = false;
           
           for (let i = 0; i < attempts; i++) {
             try {
@@ -139,12 +134,12 @@ export default function App() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
-                  db: payload,
+                  db: pld,
                   user: currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : null
                 }),
               });
               if (res.ok) {
-                success = true;
+                srvSuccess = true;
                 break;
               }
             } catch (err) {
@@ -155,6 +150,22 @@ export default function App() {
               delay *= 2;
             }
           }
+          return srvSuccess;
+        };
+
+        if (isClientFirebaseActive()) {
+          try {
+            success = await saveDirectlyToFirestore(payload);
+            if (!success) {
+              console.warn('[ClientFirebase] Falha ao sincronizar diretamente. Tentando persistir via servidor local...');
+              success = await saveToServer(payload);
+            }
+          } catch (err) {
+            console.error('[ClientFirebase] Erro ao sincronizar diretamente com o Firestore, tentando fallback via servidor:', err);
+            success = await saveToServer(payload);
+          }
+        } else {
+          success = await saveToServer(payload);
         }
 
         if (!success) {

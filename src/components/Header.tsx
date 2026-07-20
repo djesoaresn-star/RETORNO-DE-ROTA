@@ -50,10 +50,51 @@ export default function Header({
     }
   }, []);
 
+  const convertToDirectDownloadUrl = (url: string): string => {
+    if (!url || url.trim() === '') return '';
+    const trimmed = url.trim();
+
+    // 1. Google Drive Sharing Link Conversion
+    const driveFileIdMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (driveFileIdMatch && driveFileIdMatch[1]) {
+      return `https://drive.google.com/uc?export=download&id=${driveFileIdMatch[1]}`;
+    }
+    
+    const driveOpenIdMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (trimmed.includes('drive.google.com') && driveOpenIdMatch && driveOpenIdMatch[1]) {
+      return `https://drive.google.com/uc?export=download&id=${driveOpenIdMatch[1]}`;
+    }
+
+    // 2. Dropbox Link Conversion
+    if (trimmed.includes('dropbox.com')) {
+      if (trimmed.includes('dl=0')) {
+        return trimmed.replace('dl=0', 'dl=1');
+      } else if (!trimmed.includes('dl=')) {
+        return trimmed + (trimmed.includes('?') ? '&dl=1' : '?dl=1');
+      }
+    }
+
+    // 3. GitHub blob/view links to raw.githubusercontent.com
+    if (trimmed.includes('github.com') && trimmed.includes('/blob/')) {
+      return trimmed
+        .replace('github.com', 'raw.githubusercontent.com')
+        .replace('/blob/', '/');
+    }
+
+    return trimmed;
+  };
+
   const handleSaveCustomApkUrl = () => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('logiroute_custom_apk_url', customApkUrl);
-      alert("Link do APK salvo com sucesso! O botão de download agora utilizará este endereço.");
+      const convertedUrl = convertToDirectDownloadUrl(customApkUrl);
+      localStorage.setItem('logiroute_custom_apk_url', convertedUrl);
+      setCustomApkUrl(convertedUrl);
+      
+      let message = "Link do APK salvo com sucesso! O botão de download agora utilizará este endereço.";
+      if (convertedUrl !== customApkUrl) {
+        message = `Seu link foi detectado e convertido automaticamente para Download Direto!\n\nLink Original:\n${customApkUrl}\n\nLink Convertido:\n${convertedUrl}\n\nIsso evita o download de páginas HTML corrompidas e resolve o 'Erro ao analisar o pacote' no Android!`;
+      }
+      alert(message);
     }
   };
 
@@ -124,8 +165,8 @@ export default function Header({
       }
     }
     
-    // Default to absolute root of the current host
-    return `${loc.protocol}//${loc.host}/guarabira_acuracidade_v2.1.0.apk`;
+    // Default to absolute API route of the current host to force download headers and prevent browser from opening APK as text
+    return `${loc.protocol}//${loc.host}/api/download/apk`;
   };
 
   const handleDownloadApk = () => {
@@ -166,11 +207,6 @@ export default function Header({
   const handleHeaderApkClick = () => {
     // Open the information modal
     setShowApkModal(true);
-    
-    // Automatically trigger the real APK download instantly to provide a zero-click experience
-    setTimeout(() => {
-      handleDownloadApk();
-    }, 150);
   };
 
   // Logo back to home action based on current user role
@@ -970,35 +1006,109 @@ export default function Header({
                   
                   <div className="relative flex py-1 items-center">
                     <div className="flex-grow border-t border-slate-200"></div>
-                    <span className="flex-shrink mx-4 text-[9px] text-slate-400 font-mono font-bold uppercase tracking-wider">ou baixar instalador manual</span>
+                    <span className="flex-shrink mx-4 text-[9px] text-slate-400 font-mono font-bold uppercase tracking-wider">instalação por arquivo apk</span>
                     <div className="flex-grow border-t border-slate-200"></div>
                   </div>
 
-                  {apkDownloading ? (
-                    <div className="space-y-3 pt-1">
-                      <div className="flex justify-between items-center text-xxs font-bold text-slate-700">
-                        <span className="flex items-center gap-1.5 animate-pulse text-emerald-600">
-                          ⏳ Baixando guarabira_acuracidade_v2.1.0.apk...
-                        </span>
-                        <span className="font-mono text-emerald-600">{apkProgress}%</span>
+                  <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-left">
+                    <span className="text-[10px] font-black text-slate-700 uppercase tracking-wider block font-mono">
+                      📥 Download Direto do APK
+                    </span>
+                    <p className="text-[11px] text-slate-500 leading-normal">
+                      Caso prefira instalar manualmente via arquivo APK, você pode usar o botão abaixo. O link padrão baixa do próprio servidor atual.
+                    </p>
+
+                    {apkDownloading ? (
+                      <div className="space-y-2 pt-1">
+                        <div className="flex justify-between items-center text-[10px] font-bold text-slate-700">
+                          <span className="flex items-center gap-1.5 animate-pulse text-emerald-600">
+                            ⏳ Baixando APK...
+                          </span>
+                          <span className="font-mono text-emerald-600">{apkProgress}%</span>
+                        </div>
+                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
+                          <div 
+                            className="bg-emerald-500 h-2 rounded-full transition-all duration-200" 
+                            style={{ width: `${apkProgress}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200">
-                        <div 
-                          className="bg-emerald-500 h-2.5 rounded-full transition-all duration-200" 
-                          style={{ width: `${apkProgress}%` }}
-                        />
-                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleDownloadApk}
+                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-sans font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center space-x-2 border border-emerald-500 shadow-xs"
+                      >
+                        <Download className="h-4 w-4" />
+                        <span>Baixar Arquivo APK</span>
+                      </button>
+                    )}
+
+                    {/* Configuração de Link Customizado para o APK */}
+                    <div className="mt-2.5 pt-2.5 border-t border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => setShowCustomUrlInput(!showCustomUrlInput)}
+                        className="text-[10px] text-blue-600 hover:text-blue-800 font-bold flex items-center justify-center space-x-1 cursor-pointer w-full"
+                      >
+                        <Settings className="h-3 w-3 shrink-0" />
+                        <span>{showCustomUrlInput ? "Ocultar configuração de link customizado" : "Hospedar APK no Google Drive / GitHub Releases"}</span>
+                      </button>
+
+                      {showCustomUrlInput && (
+                        <div className="mt-2.5 space-y-2.5 bg-white p-3 rounded-lg border border-slate-200">
+                          <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                            Link de Hospedagem Alternativo (Google Drive, GitHub, Mega)
+                          </label>
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              value={customApkUrl}
+                              onChange={(e) => setCustomApkUrl(e.target.value)}
+                              placeholder="Cole o link de download aqui..."
+                              className="flex-1 px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 bg-white text-slate-800"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleSaveCustomApkUrl}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold uppercase transition cursor-pointer shrink-0"
+                            >
+                              Salvar
+                            </button>
+                          </div>
+                          
+                          <div className="text-[10px] text-slate-600 leading-relaxed space-y-2.5 bg-amber-50/70 p-3 rounded-lg border border-amber-200">
+                            <p className="font-bold text-amber-800 flex items-center gap-1">
+                              ⚠️ O que causa o "Erro ao analisar o pacote" no Android?
+                            </p>
+                            <p className="text-slate-600">
+                              Esse erro geralmente ocorre por dois motivos comuns em ambientes de hospedagem estáticos como o <strong>GitHub Pages</strong>:
+                            </p>
+                            <ul className="list-disc pl-4 space-y-1 text-slate-600">
+                              <li>
+                                <strong>Download de uma página HTML em vez do APK:</strong> Se o arquivo APK não pôde ser enviado para o repositório por exceder limites de tamanho, ao tentar baixar, o GitHub Pages serve a página de erro 404 (HTML) com o nome de <code>.apk</code>. O Android não consegue instalar um arquivo de texto e exibe o erro de análise.
+                              </li>
+                              <li>
+                                <strong>Uso de links de visualização:</strong> Ao compartilhar um arquivo do Google Drive, se você colar o link que termina em <code>/view</code> ou <code>/edit</code>, o download traz o código da página de visualização web do Google Drive, corrompendo o arquivo baixado.
+                              </li>
+                            </ul>
+
+                            <div className="pt-2 border-t border-amber-200/50">
+                              <p className="font-semibold text-emerald-800">💡 A Solução Perfeita (Hospedar na Nuvem):</p>
+                              <ol className="list-decimal pl-4 mt-1 space-y-1 text-slate-700">
+                                <li>Faça o upload do arquivo <strong>guarabira_acuracidade_v2.1.0.apk</strong> no seu Google Drive, OneDrive ou Dropbox.</li>
+                                <li>Defina o compartilhamento do arquivo como <strong>"Qualquer pessoa com o link"</strong> e copie o link.</li>
+                                <li>Cole o link copiado no campo acima e clique em <strong>Salvar</strong>.</li>
+                                <li>
+                                  <strong className="text-emerald-700">Conversor Inteligente:</strong> O sistema detectará o link de visualização automaticamente e o reestruturará para um link de <strong>Download Direto do arquivo binário real</strong>, solucionando o erro no celular!
+                                </li>
+                              </ol>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleDownloadApk}
-                      className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-sans font-bold text-[10px] uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center space-x-1.5 border border-slate-300"
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      <span>Baixar Arquivo APK Alternativo</span>
-                    </button>
-                  )}
+                  </div>
                 </div>
               )}
 

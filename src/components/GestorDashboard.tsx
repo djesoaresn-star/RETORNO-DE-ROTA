@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, Driver, Vehicle, Product, ActiveAsset, AuditSession, UserRole, ImportedRoute, Vale } from '../types';
-import { BarChart3, Users, Truck, ShoppingBag, Plus, Trash2, Shield, Clock, Landmark, Percent, CheckCircle2, AlertTriangle, RefreshCw, Eye, Search, Landmark as BankIcon, HardDrive, Camera, FileSpreadsheet, Sparkles, Check, FileCheck, CircleAlert, Edit, FileText, ZoomIn, ZoomOut, ArrowRight, UploadCloud, XCircle, Folder, Copy, SlidersHorizontal, TrendingUp, Box, Layers, Calendar, Database, Cloud } from 'lucide-react';
+import { BarChart3, Users, Truck, ShoppingBag, Plus, Trash2, Shield, Clock, Landmark, Percent, CheckCircle2, AlertTriangle, RefreshCw, Eye, Search, Landmark as BankIcon, HardDrive, Camera, FileSpreadsheet, Sparkles, Check, FileCheck, CircleAlert, Edit, FileText, ZoomIn, ZoomOut, ArrowRight, UploadCloud, XCircle, Folder, Copy, SlidersHorizontal, TrendingUp, Box, Layers, Calendar, Database, Cloud, PlusCircle, X } from 'lucide-react';
 import { ImageDB, PhotoRecord } from '../imageDb';
 import { DEFAULT_USERS } from '../data';
 import { isClientFirebaseActive, getGeminiKeyFromFirestore, saveGeminiKeyToFirestore } from '../clientFirebase';
@@ -117,6 +117,112 @@ export default function GestorDashboard({
 }: GestorDashboardProps) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [selectedValeIdForUpload, setSelectedValeIdForUpload] = useState<string | null>(null);
+
+  // States for manual sobra registration
+  const [showManualSobraForm, setShowManualSobraForm] = useState(false);
+  const [manualSobraProdCode, setManualSobraProdCode] = useState('');
+  const [manualSobraQty, setManualSobraQty] = useState<number>(0);
+  const [manualSobraRouteMap, setManualSobraRouteMap] = useState('');
+  const [manualSobraPlate, setManualSobraPlate] = useState('');
+  const [manualSobraDriverId, setManualSobraDriverId] = useState('');
+  const [manualSobraDate, setManualSobraDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [manualSobraSearch, setManualSobraSearch] = useState('');
+  const [isManualSobraProdDropdownOpen, setIsManualSobraProdDropdownOpen] = useState(false);
+  const productDropdownRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (productDropdownRef.current && !productDropdownRef.current.contains(event.target as Node)) {
+        setIsManualSobraProdDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  const resetManualSobraForm = () => {
+    setManualSobraProdCode('');
+    setManualSobraQty(0);
+    setManualSobraRouteMap('');
+    setManualSobraPlate('');
+    setManualSobraDriverId('');
+    setManualSobraDate(new Date().toISOString().split('T')[0]);
+    setManualSobraSearch('');
+    setIsManualSobraProdDropdownOpen(false);
+  };
+
+  const handleSaveManualSobra = () => {
+    if (!manualSobraProdCode) {
+      alert('Por favor, selecione um produto.');
+      return;
+    }
+    if (!manualSobraQty || manualSobraQty <= 0) {
+      alert('Por favor, informe uma quantidade válida maior que zero.');
+      return;
+    }
+    if (!manualSobraRouteMap.trim()) {
+      alert('Por favor, informe o mapa da rota.');
+      return;
+    }
+    if (!manualSobraPlate) {
+      alert('Por favor, selecione ou informe o veículo.');
+      return;
+    }
+    if (!manualSobraDriverId) {
+      alert('Por favor, selecione o motorista.');
+      return;
+    }
+    if (!manualSobraDate) {
+      alert('Por favor, informe a data da sobra.');
+      return;
+    }
+
+    const selectedProduct = products.find(p => p.code === manualSobraProdCode);
+    if (!selectedProduct) {
+      alert('Produto selecionado não foi encontrado na base de dados.');
+      return;
+    }
+
+    const newSobraAudit: AuditSession = {
+      id: 'manual_sobra_' + Date.now(),
+      routeMap: manualSobraRouteMap.trim(),
+      plate: manualSobraPlate,
+      driverId: manualSobraDriverId,
+      arrivalKm: 0,
+      arrivalDate: manualSobraDate,
+      status: 'finalizado_divergente',
+      conferenteId: 'gestor_manual',
+      items: [
+        {
+          productCode: selectedProduct.code,
+          productDescription: selectedProduct.description,
+          cost: selectedProduct.cost,
+          physicalQty: manualSobraQty,
+          fiscalQty: 0
+        }
+      ],
+      assets: [],
+      history: [
+        {
+          timestamp: new Date().toISOString(),
+          action: 'Cadastro de Sobra Manual',
+          user: currentUser.name,
+          details: `Cadastro de sobra física manual realizado pelo Gestor ${currentUser.name}. Produto: ${selectedProduct.description} [${selectedProduct.code}] | Qtd: ${manualSobraQty} cx. Rota: ${manualSobraRouteMap}.`
+        }
+      ],
+      surplusFlowStatus: 'PENDENTE',
+      surplusActionStatus: 'prazo_envio_ok'
+    };
+
+    const updatedAudits = [newSobraAudit, ...audits];
+    onSaveAudits(updatedAudits);
+    
+    resetManualSobraForm();
+    setShowManualSobraForm(false);
+    alert('Sobra física manual cadastrada com sucesso!');
+  };
 
   // Vales Dashboard States
   const [valesSearch, setValesSearch] = useState('');
@@ -887,9 +993,10 @@ export default function GestorDashboard({
         const isEnvioAction = actionLower.includes('alinhad') || actionLower.includes('enviado');
         const isBaixaDiretaAction = actionLower.includes('baixa direta') || actionLower.includes('baixado');
         const isCommentAction = actionLower.includes('observação da ação') || actionLower.includes('comentário');
+        const isSobraAction = actionLower.includes('sobra') || actionLower.includes('cadastro') || actionLower.includes('manual');
 
         // Only include aligned actions
-        if (!isValeAction && !isEnvioAction && !isBaixaDiretaAction && !isCommentAction) {
+        if (!isValeAction && !isEnvioAction && !isBaixaDiretaAction && !isCommentAction && !isSobraAction) {
           return;
         }
 
@@ -4370,10 +4477,209 @@ export default function GestorDashboard({
                         <span className="h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" />
                         <h4 className="font-sans font-bold text-sm text-amber-900 uppercase tracking-wider">Painel de Sobras (Foco Clientes)</h4>
                       </div>
-                      <span className="text-[10px] bg-amber-100/80 text-amber-800 px-2.5 py-1 rounded font-bold uppercase">
-                        30 Dias Limite
-                      </span>
+                      <div className="flex items-center space-x-2">
+                        {currentUser.role === 'gestor' && (
+                          <button
+                            type="button"
+                            onClick={() => setShowManualSobraForm(prev => !prev)}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] uppercase px-2.5 py-1.5 rounded-lg flex items-center space-x-1 transition shadow-3xs cursor-pointer"
+                          >
+                            <Plus className="h-3 w-3" />
+                            <span>Sobra Manual</span>
+                          </button>
+                        )}
+                        <span className="text-[10px] bg-amber-100/80 text-amber-800 px-2.5 py-1 rounded font-bold uppercase">
+                          30 Dias Limite
+                        </span>
+                      </div>
                     </div>
+
+                    {currentUser.role === 'gestor' && showManualSobraForm && (
+                      <div className="bg-indigo-50/30 p-4 rounded-xl border border-indigo-100 space-y-3.5 animate-fade-in shadow-2xs">
+                        <div className="flex justify-between items-center border-b border-indigo-100 pb-2">
+                          <h5 className="font-sans font-bold text-xs text-indigo-950 uppercase flex items-center space-x-1.5">
+                            <PlusCircle className="h-4 w-4 text-indigo-600 shrink-0" />
+                            <span>Cadastrar Sobra Física Manual</span>
+                          </h5>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              resetManualSobraForm();
+                              setShowManualSobraForm(false);
+                            }}
+                            className="text-slate-400 hover:text-slate-600 transition"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                          {/* Produto */}
+                          <div className="space-y-1 sm:col-span-2 relative" ref={productDropdownRef}>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase">
+                              Produto da Sobra (Digite o nome ou código para filtrar)
+                            </label>
+                            <div className="relative">
+                              <input
+                                type="text"
+                                placeholder="Digite o nome ou código do produto..."
+                                value={manualSobraSearch}
+                                onChange={e => {
+                                  setManualSobraSearch(e.target.value);
+                                  setIsManualSobraProdDropdownOpen(true);
+                                }}
+                                onFocus={() => setIsManualSobraProdDropdownOpen(true)}
+                                className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 h-[38px] font-sans font-semibold text-slate-700 pr-8"
+                              />
+                              {manualSobraSearch && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setManualSobraSearch('');
+                                    setManualSobraProdCode('');
+                                  }}
+                                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+
+                            {isManualSobraProdDropdownOpen && (
+                              <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto font-sans text-xs">
+                                {(() => {
+                                  const query = manualSobraSearch.toLowerCase().trim();
+                                  const filtered = products.filter(p => 
+                                    p.code.toLowerCase().includes(query) || 
+                                    p.description.toLowerCase().includes(query)
+                                  );
+
+                                  if (filtered.length === 0) {
+                                    return (
+                                      <div className="p-3 text-slate-400 text-center">
+                                        Nenhum produto encontrado.
+                                      </div>
+                                    );
+                                  }
+
+                                  return filtered.map(p => {
+                                    const isSelected = p.code === manualSobraProdCode;
+                                    return (
+                                      <div
+                                        key={p.code}
+                                        onClick={() => {
+                                          setManualSobraProdCode(p.code);
+                                          setManualSobraSearch(`[${p.code}] ${p.description}`);
+                                          setIsManualSobraProdDropdownOpen(false);
+                                        }}
+                                        className={`p-2.5 hover:bg-slate-100 cursor-pointer flex justify-between items-center transition-colors ${
+                                          isSelected ? 'bg-indigo-50 text-indigo-900 font-bold' : 'text-slate-700'
+                                        }`}
+                                      >
+                                        <span>[{p.code}] {p.description}</span>
+                                        {isSelected && <Check className="h-3.5 w-3.5 text-indigo-600 shrink-0" />}
+                                      </div>
+                                    );
+                                  });
+                                })()}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Quantidade */}
+                          <div className="space-y-1">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase">Quantidade (Caixas)</label>
+                            <input
+                              type="number"
+                              min="1"
+                              placeholder="Ex: 5"
+                              value={manualSobraQty || ''}
+                              onChange={e => setManualSobraQty(Math.max(1, parseInt(e.target.value) || 0))}
+                              className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 h-[38px]"
+                            />
+                          </div>
+
+                          {/* Mapa da Rota */}
+                          <div className="space-y-1">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase">Mapa da Rota</label>
+                            <input
+                              type="text"
+                              placeholder="Ex: MAPA-ROTA-115"
+                              value={manualSobraRouteMap}
+                              onChange={e => setManualSobraRouteMap(e.target.value)}
+                              className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 h-[38px]"
+                            />
+                          </div>
+
+                          {/* Veículo (Placa) */}
+                          <div className="space-y-1">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase">Veículo (Placa)</label>
+                            <select
+                              value={manualSobraPlate}
+                              onChange={e => setManualSobraPlate(e.target.value)}
+                              className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 h-[38px] font-sans font-semibold text-slate-700"
+                            >
+                              <option value="">-- Selecione o Veículo --</option>
+                              {vehicles.map(v => (
+                                <option key={v.plate} value={v.plate}>
+                                  {v.plate}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Motorista */}
+                          <div className="space-y-1">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase">Motorista</label>
+                            <select
+                              value={manualSobraDriverId}
+                              onChange={e => setManualSobraDriverId(e.target.value)}
+                              className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 h-[38px] font-sans font-semibold text-slate-700"
+                            >
+                              <option value="">-- Selecione o Motorista --</option>
+                              {drivers.map(d => (
+                                <option key={d.id} value={d.id}>
+                                  [{d.role}] {d.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Data da Sobra */}
+                          <div className="space-y-1 sm:col-span-2">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase">Data da Sobra</label>
+                            <input
+                              type="date"
+                              value={manualSobraDate}
+                              onChange={e => setManualSobraDate(e.target.value)}
+                              className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 h-[38px]"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex justify-end pt-2 border-t border-indigo-100 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              resetManualSobraForm();
+                              setShowManualSobraForm(false);
+                            }}
+                            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-sans font-bold text-[10px] uppercase rounded-lg transition cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveManualSobra}
+                            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-sans font-bold text-[10px] uppercase rounded-lg transition flex items-center space-x-1 cursor-pointer shadow-3xs animate-pulse"
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                            <span>Gravar Sobra</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {(() => {
                       // Filter audits with surplus (at least one item physical > fiscal) and within the last 30 days (or anytime if not yet sent)
@@ -4471,6 +4777,9 @@ export default function GestorDashboard({
                                     <div className="flex items-center space-x-2">
                                       <span className="font-sans font-extrabold text-sm text-slate-900 bg-amber-500/10 px-2 py-0.5 rounded">Mapa {audit.routeMap}</span>
                                       <span className="font-mono text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{audit.plate}</span>
+                                      {(audit.id.startsWith('manual_sobra_') || audit.conferenteId === 'gestor_manual') && (
+                                        <span className="text-[9px] bg-indigo-100 text-indigo-800 font-extrabold px-1.5 py-0.5 rounded uppercase font-mono tracking-wider">Manual</span>
+                                      )}
                                     </div>
                                     <p className="text-[10px] text-slate-400 mt-1 font-sans">
                                       Motorista: <strong>{driverName}</strong> • Ajudante: <strong>{helperName}</strong>

@@ -21,13 +21,15 @@ service cloud.firestore {
              docId == "importedRoutes" ||
              docId == "photos" ||
              docId == "audit_logs" ||
+             docId == "gemini_config" ||
              docId.matches("^[a-zA-Z0-9_]+_chunk_\\d+$");
     }
 
     // Helper to validate the structured array envelope of the App State documents or control documents
     function isValidAppState(incomingData) {
       return (incomingData.keys().hasAll(['data']) && incomingData.data is list) ||
-             (incomingData.keys().hasAll(['chunkCount']) && incomingData.chunkCount is int);
+             (incomingData.keys().hasAll(['chunkCount']) && incomingData.chunkCount is int) ||
+             (incomingData.keys().hasAll(['apiKey']) && incomingData.apiKey is string);
     }
 
     // Secure the app_state collection
