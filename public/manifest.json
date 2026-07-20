@@ -1,19 +1,28 @@
 {
+  "id": "com.paubrasil.guarabira.retorno",
   "short_name": "Retorno Pau Brasil",
-  "name": "RETORNO DE ROTA PAU BRASIL GUARABIRA",
+  "name": "Retorno de Rota Pau Brasil Guarabira",
+  "description": "Plataforma integrada de acuracidade e retorno de rotas Pau Brasil Guarabira",
   "icons": [
     {
-      "src": "/pau_brasil_logo.jpg",
-      "type": "image/jpeg",
+      "src": "./icon-192.png",
+      "type": "image/png",
       "sizes": "192x192"
     },
     {
-      "src": "/pau_brasil_logo.jpg",
-      "type": "image/jpeg",
+      "src": "./icon-512.png",
+      "type": "image/png",
       "sizes": "512x512"
+    },
+    {
+      "src": "./icon-maskable.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
     }
   ],
-  "start_url": "/",
+  "start_url": "./",
+  "scope": "./",
   "background_color": "#0b0f19",
   "theme_color": "#020617",
   "display": "standalone",

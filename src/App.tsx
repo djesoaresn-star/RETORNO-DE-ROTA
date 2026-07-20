@@ -3,7 +3,7 @@ import { User, Driver, Vehicle, Product, ActiveAsset, AuditSession, ReturnForeca
 import { AppStore } from './store';
 import { DEFAULT_PRODUCTS } from './data';
 import { ImageDB } from './imageDb';
-import { isClientFirebaseActive, fetchDirectlyFromFirestore, saveDirectlyToFirestore, subscribeToFirestore } from './clientFirebase';
+import { isClientFirebaseActive, fetchDirectlyFromFirestore, saveDirectlyToFirestore, subscribeToFirestore, getClientAuthError } from './clientFirebase';
 import Header from './components/Header';
 import ConferenteView from './components/ConferenteView';
 import FiscalView from './components/FiscalView';
@@ -27,6 +27,7 @@ export default function App() {
   const [audits, setAudits] = useState<AuditSession[]>([]);
   const [vales, setVales] = useState<Vale[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [customManualHTML, setCustomManualHTML] = useState<string>('');
 
   // Forecasts and Notifications
   const [returnForecasts, setReturnForecasts] = useState<ReturnForecast[]>([]);
@@ -86,6 +87,12 @@ export default function App() {
     });
   };
 
+  const handleSaveCustomManual = (html: string) => {
+    setCustomManualHTML(html);
+    AppStore.setCustomManual(html);
+    pushDatabaseToServer({ customManual: html });
+  };
+
   // Push changes to server database with batching/throttling to prevent concurrency race conditions
   const pushDatabaseToServer = (updates: {
     users?: User[];
@@ -98,6 +105,7 @@ export default function App() {
     fiscalAlerts?: FiscalAlert[];
     importedRoutes?: ImportedRoute[];
     vales?: Vale[];
+    customManual?: string;
   }) => {
     lastWriteTime.current = Date.now();
     
@@ -258,6 +266,7 @@ export default function App() {
     if (db.fiscalAlerts) { setFiscalAlerts(db.fiscalAlerts); AppStore.setFiscalAlerts(db.fiscalAlerts); }
     if (db.importedRoutes) { const cleaned = cleanImportedRoutes(db.importedRoutes); setImportedRoutes(cleaned); AppStore.setImportedRoutes(cleaned); }
     if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
+    if (db.customManual !== undefined) { setCustomManualHTML(db.customManual); AppStore.setCustomManual(db.customManual); }
   };
 
   // Load all databases from store on mount and establish server sync
@@ -275,6 +284,7 @@ export default function App() {
     setFiscalAlerts(AppStore.getFiscalAlerts());
     setImportedRoutes(cleanImportedRoutes(AppStore.getImportedRoutes()));
     setAuditLogs(AppStore.getAuditLogs());
+    setCustomManualHTML(AppStore.getCustomManual());
 
     // Check persistent user ID if authenticated
     const savedUserId = localStorage.getItem('logiroute_authenticated_user_id');
@@ -896,6 +906,8 @@ export default function App() {
                 onSaveVales={handleSaveVales}
                 forceTab="dashboard"
                 auditLogs={auditLogs}
+                customManualHTML={customManualHTML}
+                onSaveCustomManual={handleSaveCustomManual}
               />
             )}
 
@@ -919,6 +931,8 @@ export default function App() {
                 onSaveVales={handleSaveVales}
                 forceTab="cadastros"
                 auditLogs={auditLogs}
+                customManualHTML={customManualHTML}
+                onSaveCustomManual={handleSaveCustomManual}
               />
             )}
           </>
@@ -926,7 +940,7 @@ export default function App() {
       </main>
 
       {/* Manual de uso da plataforma com exportação para PDF */}
-      {isAuthenticated && currentUser && <PlatformManual />}
+      {isAuthenticated && currentUser && <PlatformManual customManualHTML={customManualHTML} />}
 
       {/* Sticky footer indicating production-ready definitive system */}
       <footer className="bg-white border-t border-slate-200 py-4 text-center text-xxs text-slate-400 font-medium font-sans">

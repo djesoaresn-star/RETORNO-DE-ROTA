@@ -26,6 +26,7 @@ export interface Product {
   hectoFactor: number;
   cost: number;
   curve: string;
+  photoUrl?: string;
 }
 
 export interface Vehicle {

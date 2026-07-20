@@ -41,7 +41,8 @@ service cloud.firestore {
 
     // Secure the photos collection
     match /photos/{photoId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if true;
     }
   }
 }

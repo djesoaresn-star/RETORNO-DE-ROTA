@@ -5,6 +5,7 @@ import {
   LogOut, FileSpreadsheet, Bell, Check, Clock, AlertCircle, FileText,
   Sun, Moon, Folder, Smartphone, Download
 } from 'lucide-react';
+import { isClientFirebaseActive, getFirebaseConnectionState } from '../clientFirebase';
 
 interface HeaderProps {
   currentUser: User;
@@ -42,6 +43,65 @@ export default function Header({
   const [isIframe, setIsIframe] = useState(false);
   const [showCustomUrlInput, setShowCustomUrlInput] = useState(false);
   const [customApkUrl, setCustomApkUrl] = useState('');
+
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [firebaseStatus, setFirebaseStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const checkFirebaseActive = () => {
+      try {
+        const state = getFirebaseConnectionState();
+        setFirebaseStatus(state);
+      } catch (e) {
+        setFirebaseStatus('disconnected');
+      }
+    };
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      setFirebaseStatus('connecting');
+      // Verify Firestore is reachable after a short delay to stabilize
+      setTimeout(() => {
+        if (navigator.onLine) {
+          checkFirebaseActive();
+        } else {
+          setFirebaseStatus('disconnected');
+        }
+      }, 1200);
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      setFirebaseStatus('disconnected');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Initial check
+    if (navigator.onLine) {
+      checkFirebaseActive();
+    } else {
+      setFirebaseStatus('disconnected');
+    }
+
+    // Set up a periodic check in case network fluctuates or silent dropouts occur
+    const interval = setInterval(() => {
+      if (navigator.onLine) {
+        checkFirebaseActive();
+      } else {
+        setFirebaseStatus('disconnected');
+      }
+    }, 15000);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -280,6 +340,38 @@ export default function Header({
 
             {/* User Profile & Actions */}
             <div className="flex items-center space-x-3">
+              {/* Firebase Connection Status Badge */}
+              <div className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-bold border transition-all duration-300 shadow-xs ${
+                firebaseStatus === 'connected' 
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                  : firebaseStatus === 'connecting'
+                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                    : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+              }`} title={
+                firebaseStatus === 'connected' 
+                  ? 'Sincronização Ativa com Firebase' 
+                  : firebaseStatus === 'connecting'
+                    ? 'Reconectando ao Firebase...'
+                    : 'Sem conexão com Firebase / Offline'
+              }>
+                <span className="relative flex h-1.5 w-1.5 shrink-0">
+                  {firebaseStatus === 'connected' && (
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  )}
+                  {firebaseStatus === 'connecting' && (
+                    <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  )}
+                  <span className={`relative inline-flex rounded-full h-1.5 w-1.5 transition-all duration-300 ${
+                    firebaseStatus === 'connected' 
+                      ? 'bg-emerald-500' 
+                      : firebaseStatus === 'connecting' 
+                        ? 'bg-amber-500' 
+                        : 'bg-rose-500'
+                  }`}></span>
+                </span>
+                <span className="uppercase tracking-wider text-[9px]">Firebase</span>
+              </div>
+
               {/* Active User Badge / Context */}
               <div className="hidden sm:flex items-center space-x-2 bg-slate-800/60 border border-slate-700/60 px-3.5 py-1.5 rounded-full text-xxs font-medium text-slate-300">
                 <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />

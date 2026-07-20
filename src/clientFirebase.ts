@@ -1,15 +1,97 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { initializeFirestore, doc, getDoc, setDoc, deleteDoc, collection, onSnapshot } from "firebase/firestore";
+import { getAuth, signInAnonymously } from "firebase/auth";
 import firebaseConfig from "../firebase-applet-config.json";
 
 // Shared DB keys for state tracking
 const DB_KEYS = [
   "users", "drivers", "vehicles", "products", "activeAssets", 
   "audits", "vales", "returnForecasts", "fiscalAlerts", 
-  "importedRoutes", "audit_logs"
+  "importedRoutes", "audit_logs", "customManual"
 ];
 
 let firestoreInstance: any = null;
+let isAuthenticating = false;
+let isAuthenticated = false;
+let clientAuthError: string | null = null;
+let lastAuthAttemptTime = 0;
+const AUTH_COOLDOWN_MS = 25000; // 25 seconds cooldown to prevent auth/too-many-requests loop
+let lastSuccessfulSyncTime = 0;
+
+export function getClientAuthError(): string | null {
+  return clientAuthError;
+}
+
+export function getFirebaseConnectionState(): 'connected' | 'connecting' | 'disconnected' {
+  if (typeof window === "undefined" || (typeof navigator !== "undefined" && !navigator.onLine)) {
+    return 'disconnected';
+  }
+  
+  const db = getClientFirestore();
+  if (!db) {
+    return 'disconnected';
+  }
+  
+  // If we have a critical auth error that isn't bypassed by our public Firestore rules
+  if (clientAuthError && !clientAuthError.includes("admin-restricted-operation") && !isAuthenticated) {
+    return 'disconnected';
+  }
+  
+  // If we are authenticated OR we are operating in Admin-Restricted-Operation public compatibility mode
+  if (isAuthenticated || (clientAuthError && clientAuthError.includes("admin-restricted-operation"))) {
+    return 'connected';
+  }
+  
+  if (isAuthenticating) {
+    return 'connecting';
+  }
+  
+  return 'connecting';
+}
+
+function triggerAnonymousAuth() {
+  const now = Date.now();
+  if (now - lastAuthAttemptTime < AUTH_COOLDOWN_MS) {
+    return;
+  }
+  
+  try {
+    const auth = getAuth();
+    if (auth.currentUser) {
+      isAuthenticated = true;
+      return;
+    }
+    
+    lastAuthAttemptTime = now;
+    isAuthenticating = true;
+    signInAnonymously(auth)
+      .then((userCredential) => {
+        console.log("[ClientFirebase] Autenticação anônima realizada com sucesso:", userCredential.user.uid);
+        isAuthenticated = true;
+        isAuthenticating = false;
+        clientAuthError = null;
+      })
+      .catch((err) => {
+        const errCode = err.code || err.message || "unknown";
+        clientAuthError = errCode;
+        isAuthenticating = false;
+        
+        if (errCode.includes("admin-restricted-operation")) {
+          console.warn(
+            "[ClientFirebase] ⚠️ Métodos de login anônimo estão desativados no console do Firebase.\n" +
+            "👉 Operando em Modo de Compatibilidade Direct Schema (regras do Firestore abertas para sincronização sem login)."
+          );
+        } else if (errCode.includes("too-many-requests")) {
+          console.warn("[ClientFirebase] ⚠️ Muitas requisições de autenticação enviadas. Cooldown ativo...");
+        } else {
+          console.error("[ClientFirebase] Falha na autenticação anônima do Firebase:", err);
+        }
+      });
+  } catch (e) {
+    console.warn("[ClientFirebase] Erro ao obter serviço de autenticação:", e);
+    clientAuthError = "get_auth_failed";
+  }
+}
 
 // Determine if we should connect directly to Firestore from the browser
 export function isClientFirebaseActive(): boolean {
@@ -87,7 +169,12 @@ export function subscribeToFirestore(onUpdate: (db: any) => void): () => void {
 
 // Get or initialize the direct client Firestore instance
 export function getClientFirestore() {
-  if (firestoreInstance) return firestoreInstance;
+  if (firestoreInstance) {
+    if (!isAuthenticated && !isAuthenticating) {
+      triggerAnonymousAuth();
+    }
+    return firestoreInstance;
+  }
   
   try {
     let config: any = null;
@@ -123,6 +210,10 @@ export function getClientFirestore() {
     const app = getApps().length === 0 ? initializeApp(config) : getApp();
     firestoreInstance = initializeFirestore(app, {}, config.firestoreDatabaseId || undefined);
     console.log("[ClientFirebase] Conexão direta com Firestore inicializada com sucesso!");
+    
+    // Trigger anonymous authentication immediately upon initialization
+    triggerAnonymousAuth();
+    
     return firestoreInstance;
   } catch (err) {
     console.warn("[ClientFirebase] Erro ao inicializar conexão direta com o Firestore:", err);

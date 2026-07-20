@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { User, Driver, Vehicle, Product, ActiveAsset, AuditSession, UserRole, ImportedRoute, Vale } from '../types';
-import { BarChart3, Users, Truck, ShoppingBag, Plus, Trash2, Shield, Clock, Landmark, Percent, CheckCircle2, AlertTriangle, RefreshCw, Eye, Search, Landmark as BankIcon, HardDrive, Camera, FileSpreadsheet, Sparkles, Check, FileCheck, CircleAlert, Edit, FileText, ZoomIn, ZoomOut, ArrowRight, UploadCloud, XCircle, Folder, Copy, SlidersHorizontal, TrendingUp, Box, Layers, Calendar, Database, Cloud, PlusCircle, X } from 'lucide-react';
+import { BarChart3, Users, Truck, ShoppingBag, Plus, Trash2, Shield, Clock, Landmark, Percent, CheckCircle2, AlertTriangle, RefreshCw, Eye, Search, Landmark as BankIcon, HardDrive, Camera, FileSpreadsheet, Sparkles, Check, FileCheck, CircleAlert, Edit, FileText, ZoomIn, ZoomOut, ArrowRight, UploadCloud, XCircle, Folder, Copy, SlidersHorizontal, TrendingUp, Box, Layers, Calendar, Database, Cloud, PlusCircle, X, BookOpen, FileCode, Download } from 'lucide-react';
 import { ImageDB, PhotoRecord } from '../imageDb';
-import { DEFAULT_USERS } from '../data';
+import { DEFAULT_USERS, DEFAULT_PRODUCTS, DEFAULT_DRIVERS, DEFAULT_VEHICLES } from '../data';
+import { DEFAULT_MANUAL_HTML } from './DefaultManualContent';
 import { isClientFirebaseActive, getGeminiKeyFromFirestore, saveGeminiKeyToFirestore } from '../clientFirebase';
+// @ts-ignore
+import mammoth from 'mammoth';
 
 interface GestorDashboardProps {
   currentUser: User;
@@ -24,6 +27,8 @@ interface GestorDashboardProps {
   onSaveVales: (vales: Vale[]) => void;
   forceTab?: 'dashboard' | 'cadastros';
   auditLogs?: any[];
+  customManualHTML?: string;
+  onSaveCustomManual?: (html: string) => void;
 }
 
 function AuditPhotoViewer({ auditId, onSelectPhoto }: { auditId: string; onSelectPhoto: (photo: PhotoRecord) => void }) {
@@ -113,7 +118,9 @@ export default function GestorDashboard({
   vales = [],
   onSaveVales,
   forceTab,
-  auditLogs = []
+  auditLogs = [],
+  customManualHTML = '',
+  onSaveCustomManual
 }: GestorDashboardProps) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [selectedValeIdForUpload, setSelectedValeIdForUpload] = useState<string | null>(null);
@@ -283,7 +290,7 @@ export default function GestorDashboard({
     }
   }, [forceTab]);
 
-  const [cadastroSubTab, setCadastroSubTab] = useState<'usuarios' | 'produtos' | 'veiculos' | 'motoristas' | 'manutencao' | 'firebase'>('usuarios');
+  const [cadastroSubTab, setCadastroSubTab] = useState<'usuarios' | 'produtos' | 'veiculos' | 'motoristas' | 'manutencao' | 'firebase' | 'manual_diretrizes'>('usuarios');
 
   // Firebase Firestore Connection Status States
   const [firebaseStatus, setFirebaseStatus] = useState<{
@@ -706,10 +713,18 @@ export default function GestorDashboard({
   const [newProdPallet, setNewProdPallet] = useState(84);
   const [newProdCost, setNewProdCost] = useState<number | ''>('');
   const [newProdHectoFactor, setNewProdHectoFactor] = useState<number | ''>('');
+  const [newProdPhotoUrl, setNewProdPhotoUrl] = useState('');
 
   // Product bulk import states
   const [isProductDragOver, setIsProductDragOver] = useState(false);
   const [productImportMode, setProductImportMode] = useState<'replace' | 'merge' | 'add'>('replace');
+
+  // Manual template and database baseline import/export states
+  const [isManualDragOver, setIsManualDragOver] = useState(false);
+  const [manualImportData, setManualImportData] = useState<any | null>(null);
+  const [manualImportError, setManualImportError] = useState<string | null>(null);
+  const [manualImportMode, setManualImportMode] = useState<'merge' | 'replace'>('merge');
+  const [manualImportSuccessMsg, setManualImportSuccessMsg] = useState<string | null>(null);
 
   // 3. New Vehicle form state
   const [newVehPlate, setNewVehPlate] = useState('');
@@ -1628,6 +1643,382 @@ export default function GestorDashboard({
         onSaveProducts(products.filter(p => p.code !== code));
       }
     );
+  };
+
+  // --- MANUAL GUIDELINES IMPORT / EXPORT HANDLERS ---
+  const generateWordHTML = (data: { products: Product[], drivers: Driver[], vehicles: Vehicle[], users: any[] }) => {
+    const productsRows = data.products.map(p => `
+      <tr>
+        <td style="border: 1px solid #cbd5e1; padding: 8px;">${p.code || ''}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; font-weight: bold;">${p.description || ''}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; text-align: center;">${p.palletFactor || 84}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; text-align: right;">R$ ${(p.cost || 0).toFixed(2).replace('.', ',')}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; text-align: center;">${(p.hectoFactor || 0).toFixed(4).replace('.', ',')}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; text-align: center;">${p.curve || 'C'}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; text-align: center;">
+          ${p.photoUrl ? `<img src="${p.photoUrl}" width="60" height="60" style="width:60px; height:60px; object-fit:cover;" />` : 'Sem Foto'}
+        </td>
+      </tr>
+    `).join('');
+
+    const driversRows = data.drivers.map(d => `
+      <tr>
+        <td style="border: 1px solid #cbd5e1; padding: 8px;">${d.id || ''}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; font-weight: bold;">${d.name || ''}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px;">${d.cpf || ''}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px;">${d.role === 'AJUDANTE' ? 'Ajudante' : 'Motorista'}</td>
+      </tr>
+    `).join('');
+
+    const vehiclesRows = data.vehicles.map(v => `
+      <tr>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; font-family: monospace; font-weight: bold;">${v.plate || ''}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; text-align: center;">${v.capacityPallets || 0}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; text-align: center;">${v.isTemporary ? 'Temporário' : 'Fixo'}</td>
+      </tr>
+    `).join('');
+
+    const usersRows = data.users.map(u => `
+      <tr>
+        <td style="border: 1px solid #cbd5e1; padding: 8px;">${u.id || ''}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; font-weight: bold;">${u.name || ''}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; text-transform: capitalize;">${u.role || ''}</td>
+        <td style="border: 1px solid #cbd5e1; padding: 8px; font-family: monospace;">${u.username || ''}</td>
+      </tr>
+    `).join('');
+
+    return `
+  <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+  <head>
+    <meta charset="utf-8">
+    <title>Diretrizes e Padrões de Cadastro</title>
+    <!--[if gte mso 9]>
+    <xml>
+      <w:WordDocument>
+        <w:View>Print</w:View>
+        <w:Zoom>100</w:Zoom>
+        <w:DoNotOptimizeForBrowser/>
+      </w:WordDocument>
+    </xml>
+    <![endif]-->
+    <style>
+      body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #1e293b; margin: 20px; }
+      h1 { font-size: 20pt; color: #0f35a9; margin-bottom: 5px; font-family: 'Segoe UI Semibold', sans-serif; }
+      h2 { font-size: 14pt; color: #4f46e5; margin-top: 25px; margin-bottom: 10px; border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; font-family: 'Segoe UI Semibold', sans-serif; }
+      p { margin-bottom: 15px; font-size: 10pt; color: #475569; }
+      table { border-collapse: collapse; width: 100%; margin-top: 10px; margin-bottom: 20px; }
+      th { background-color: #f1f5f9; border: 1px solid #cbd5e1; padding: 10px; font-weight: bold; text-align: left; font-size: 10pt; color: #334155; }
+      td { border: 1px solid #cbd5e1; padding: 8px; font-size: 9.5pt; vertical-align: middle; color: #334155; }
+      .footer { font-size: 8pt; color: #94a3b8; text-align: center; margin-top: 40px; border-top: 1px solid #e2e8f0; padding-top: 10px; }
+    </style>
+  </head>
+  <body>
+    <h1>Diretrizes Operacionais e Cadastro Geral</h1>
+    <p>Este documento contém as diretrizes da plataforma de Sobras e Faltas. Você pode editar este arquivo diretamente no Microsoft Word (recomenda-se salvar como .docx ou Página Web .htm/.html após a edição, ou manter o formato .doc). Mantenha as tabelas e cabeçalhos intactos para que o sistema possa ler e importar suas alterações de forma automatizada.</p>
+    <p><strong>DICA SOBRE IMAGENS:</strong> Se você deseja definir ou manter fotos dos produtos, você pode simplesmente colar imagens JPG diretamente nas células da coluna "Foto" no Word. Ao importar este arquivo de volta (.docx, .doc ou Página Web), a plataforma irá ler e preservar as imagens automaticamente!</p>
+    
+    <h2>Produtos (SKUs)</h2>
+    <table id="table-products" border="1" style="border-collapse: collapse; width: 100%;">
+      <thead>
+        <tr style="background-color: #f1f5f9;">
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Código</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Descrição</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Fator Caixa / Palete</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Custo (R$)</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Fator Hectolitro</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Curva</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px; width: 80px;">Foto / Imagem</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${productsRows}
+      </tbody>
+    </table>
+
+    <h2>Motoristas e Ajudantes</h2>
+    <table id="table-drivers" border="1" style="border-collapse: collapse; width: 100%;">
+      <thead>
+        <tr style="background-color: #f1f5f9;">
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">ID</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Nome Completo</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">CPF</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Função</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${driversRows}
+      </tbody>
+    </table>
+
+    <h2>Veículos</h2>
+    <table id="table-vehicles" border="1" style="border-collapse: collapse; width: 100%;">
+      <thead>
+        <tr style="background-color: #f1f5f9;">
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Placa</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Capacidade (Paletes)</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Tipo</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${vehiclesRows}
+      </tbody>
+    </table>
+
+    <h2>Usuários do Sistema</h2>
+    <table id="table-users" border="1" style="border-collapse: collapse; width: 100%;">
+      <thead>
+        <tr style="background-color: #f1f5f9;">
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">ID</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Nome</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Função</th>
+          <th style="border: 1px solid #cbd5e1; padding: 10px;">Username</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${usersRows}
+      </tbody>
+    </table>
+
+    <div class="footer">Gerado automaticamente pelo Sistema de Gestão de Sobras e Faltas em ${new Date().toLocaleDateString('pt-BR')}.</div>
+  </body>
+  </html>
+    `;
+  };
+
+  const parseHtmlToData = (htmlString: string): any => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlString, 'text/html');
+    const tables = doc.querySelectorAll('table');
+
+    const result: any = {
+      products: [],
+      drivers: [],
+      vehicles: [],
+      users: []
+    };
+
+    tables.forEach(table => {
+      const id = table.getAttribute('id');
+      const headerCells = Array.from(table.querySelectorAll('th')).map(th => th.textContent?.trim().toLowerCase() || '');
+      
+      let tableType: 'products' | 'drivers' | 'vehicles' | 'users' | null = null;
+      
+      if (id === 'table-products' || (headerCells.includes('código') && headerCells.includes('descrição'))) {
+        tableType = 'products';
+      } else if (id === 'table-drivers' || (headerCells.includes('id') && headerCells.includes('nome completo'))) {
+        tableType = 'drivers';
+      } else if (id === 'table-vehicles' || (headerCells.includes('placa') && headerCells.includes('capacidade (paletes)'))) {
+        tableType = 'vehicles';
+      } else if (id === 'table-users' || (headerCells.includes('id') && headerCells.includes('nome') && headerCells.includes('username'))) {
+        tableType = 'users';
+      }
+
+      if (!tableType) return;
+
+      const rows = table.querySelectorAll('tbody tr, tr');
+      rows.forEach(row => {
+        if (row.querySelector('th')) return;
+        
+        const cells = Array.from(row.querySelectorAll('td'));
+        if (cells.length === 0) return;
+
+        const cellText = cells.map(td => td.textContent?.trim() || '');
+
+        if (tableType === 'products') {
+          const code = cellText[0];
+          const description = cellText[1];
+          if (!code || !description) return;
+
+          const palletFactor = parseInt(cellText[2]) || 84;
+          
+          let costStr = cellText[3] || '0';
+          costStr = costStr.replace(/[^\d.,]/g, '').replace(',', '.');
+          const cost = parseFloat(costStr) || 0;
+
+          const hectoFactor = parseFloat(cellText[4]?.replace(',', '.')) || 0;
+          const curve = cellText[5] || 'C';
+
+          // Extract photo
+          let photoUrl: string | undefined = undefined;
+          const img = cells[6]?.querySelector('img');
+          if (img) {
+            photoUrl = img.getAttribute('src') || undefined;
+          } else if (cellText[6] && (cellText[6].startsWith('http') || cellText[6].startsWith('data:'))) {
+            photoUrl = cellText[6];
+          }
+
+          result.products.push({
+            code,
+            description,
+            palletFactor,
+            cost,
+            hectoFactor,
+            curve,
+            photoUrl,
+            group: 'CERVEJA',
+            unit: 'CX',
+            skuFactor: 1
+          });
+        } else if (tableType === 'drivers') {
+          const idVal = cellText[0];
+          const name = cellText[1];
+          const cpf = cellText[2] || '';
+          const roleStr = (cellText[3] || 'motorista').toLowerCase();
+          const role = roleStr.includes('ajudante') ? 'AJUDANTE' : 'MOTORISTA';
+          if (idVal && name) {
+            result.drivers.push({ id: idVal, name, role, cpf });
+          }
+        } else if (tableType === 'vehicles') {
+          const plate = cellText[0]?.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+          const capacityPallets = parseInt(cellText[1]) || 0;
+          const isTemporary = (cellText[2] || '').toLowerCase().includes('temporário');
+          if (plate) {
+            result.vehicles.push({ plate, capacityPallets, isTemporary });
+          }
+        } else if (tableType === 'users') {
+          const idVal = cellText[0];
+          const name = cellText[1];
+          let role = (cellText[2] || 'conferente').toLowerCase().trim();
+          if (role !== 'gestor' && role !== 'fiscal') role = 'conferente';
+          const username = cellText[3] || '';
+          if (idVal && name && username) {
+            result.users.push({ id: idVal, name, role, username });
+          }
+        }
+      });
+    });
+
+    return result;
+  };
+
+  const handleDownloadManualWord = () => {
+    const manualContent = customManualHTML || DEFAULT_MANUAL_HTML;
+    
+    const wordHtml = `
+  <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+  <head>
+    <meta charset="utf-8">
+    <title>Manual de Diretrizes e Operações</title>
+    <!--[if gte mso 9]>
+    <xml>
+      <w:WordDocument>
+        <w:View>Print</w:View>
+        <w:Zoom>100</w:Zoom>
+        <w:DoNotOptimizeForBrowser/>
+      </w:WordDocument>
+    </xml>
+    <![endif]-->
+    <style>
+      body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #1e293b; margin: 20px; }
+      h1 { font-size: 20pt; color: #0f35a9; margin-bottom: 5px; font-family: 'Segoe UI Semibold', sans-serif; }
+      h2 { font-size: 14pt; color: #4f46e5; margin-top: 25px; margin-bottom: 10px; border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; font-family: 'Segoe UI Semibold', sans-serif; }
+      p { margin-bottom: 15px; font-size: 10pt; color: #475569; }
+      table { border-collapse: collapse; width: 100%; margin-top: 10px; margin-bottom: 20px; border: 1px solid #cbd5e1; }
+      th { background-color: #f1f5f9; border: 1px solid #cbd5e1; padding: 10px; font-weight: bold; text-align: left; font-size: 10pt; color: #334155; }
+      td { border: 1px solid #cbd5e1; padding: 8px; font-size: 9.5pt; vertical-align: middle; color: #334155; }
+    </style>
+  </head>
+  <body>
+    ${manualContent}
+  </body>
+  </html>
+    `;
+    const blob = new Blob(['\ufeff' + wordHtml], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'Manual_de_Operacoes_Pau_Brasil.doc';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleManualFileSelect = (file: File) => {
+    setManualImportError(null);
+    setManualImportSuccessMsg(null);
+    setManualImportData(null);
+
+    const fileExt = file.name.split('.').pop()?.toLowerCase();
+
+    if (fileExt === 'json') {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const text = e.target?.result as string;
+          if (!text) throw new Error("O arquivo está vazio.");
+          let parsedHTML = '';
+          try {
+            const parsed = JSON.parse(text);
+            parsedHTML = parsed.customManual || parsed.html || text;
+          } catch (e) {
+            parsedHTML = text;
+          }
+          setManualImportData(parsedHTML);
+        } catch (err: any) {
+          setManualImportError(err.message || "Erro ao processar arquivo JSON.");
+        }
+      };
+      reader.onerror = () => {
+        setManualImportError("Falha na leitura física do arquivo.");
+      };
+      reader.readAsText(file);
+    } 
+    else if (fileExt === 'docx') {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const arrayBuffer = e.target?.result as ArrayBuffer;
+          if (!arrayBuffer) throw new Error("O arquivo está vazio.");
+
+          // Convert .docx to HTML using mammoth
+          // @ts-ignore
+          const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer });
+          const html = result.value;
+          
+          if (!html) throw new Error("Não foi possível extrair o texto do documento do Word.");
+
+          setManualImportData(html);
+        } catch (err: any) {
+          setManualImportError(`Falha ao ler arquivo Word (.docx): ${err.message || err}`);
+        }
+      };
+      reader.onerror = () => {
+        setManualImportError("Falha na leitura física do arquivo.");
+      };
+      reader.readAsArrayBuffer(file);
+    } 
+    else if (fileExt === 'doc' || fileExt === 'html' || fileExt === 'htm') {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const text = e.target?.result as string;
+          if (!text) throw new Error("O arquivo está vazio.");
+
+          setManualImportData(text);
+        } catch (err: any) {
+          setManualImportError(`Falha ao ler arquivo: ${err.message || err}`);
+        }
+      };
+      reader.onerror = () => {
+        setManualImportError("Falha na leitura física do arquivo.");
+      };
+      reader.readAsText(file);
+    } 
+    else {
+      setManualImportError("Formato de arquivo não suportado. Use arquivos do Word (.docx, .doc), Páginas Web (.html, .htm) ou JSON (.json).");
+    }
+  };
+
+  const handleExecuteManualImport = () => {
+    if (!manualImportData || !onSaveCustomManual) return;
+    try {
+      onSaveCustomManual(manualImportData);
+      setManualImportSuccessMsg("Sucesso! O Manual de Operações foi atualizado de acordo com o arquivo importado e sincronizado com os conferentes.");
+      setManualImportData(null);
+    } catch (e: any) {
+      setManualImportError(`Falha ao salvar o novo manual: ${e.message || e}`);
+    }
   };
 
   // Action Add Vehicle
@@ -3260,6 +3651,20 @@ export default function GestorDashboard({
               <span>Manutenção do Sistema</span>
             </button>
 
+            <button
+              id="subtab_manual_diretrizes"
+              onClick={() => { setCadastroSubTab('manual_diretrizes'); setSearchQuery(''); }}
+              className={`w-full text-left px-4 py-2.5 rounded-lg text-xs font-semibold flex items-center space-x-2.5 transition ${
+                cadastroSubTab === 'manual_diretrizes' 
+                  ? 'bg-slate-900 text-white shadow-sm' 
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              <BookOpen className="h-4 w-4 text-indigo-600" />
+              <span className="flex-1">Padrão de Diretrizes</span>
+              <span className="text-[8px] font-bold bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded-full font-sans uppercase">Baixar/Importar</span>
+            </button>
+
             {currentUser.role === 'gestor' && (
               <button
                 id="subtab_firebase"
@@ -4581,6 +4986,173 @@ export default function GestorDashboard({
 
                   </div>
                 )}
+              </div>
+            )}
+
+            {cadastroSubTab === 'manual_diretrizes' && (
+              <div className="space-y-6 animate-fade-in" id="manual_diretrizes_tab_content">
+                <div className="border-b border-slate-100 pb-4">
+                  <h3 className="font-sans font-bold text-base text-slate-900">Manual de Diretrizes e Operações (POP / SOP)</h3>
+                  <p className="text-xxs text-slate-400 mt-0.5">
+                    Gerencie o documento oficial de diretrizes e procedimentos de retorno de rota da distribuidora. Baixe o manual em formato do Word para edições e envie o arquivo revisado para sincronização instantânea.
+                  </p>
+                </div>
+
+                {/* Single Export Card */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 flex flex-col justify-between space-y-4 shadow-xs">
+                  <div>
+                    <div className="flex items-center space-x-2 text-amber-600">
+                      <BookOpen className="h-5 w-5" />
+                      <h4 className="font-sans font-bold text-xs uppercase tracking-wider">Exportar Manual de Operações (Microsoft Word)</h4>
+                    </div>
+                    <p className="text-xxs text-slate-500 mt-2 leading-relaxed">
+                      Gere e baixe o manual de diretrizes ativas atuais da plataforma em formato de documento Word (.doc). Você poderá abri-lo e editá-lo livremente no Microsoft Word, adicionando ou modificando textos, EPIs e colando fotos JPG/PNG diretamente.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleDownloadManualWord}
+                    className="w-full md:w-auto self-start flex items-center justify-center space-x-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold rounded-lg transition shadow-sm cursor-pointer"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Exportar Manual de Operações (Word)</span>
+                  </button>
+                </div>
+
+                {/* Single Import / Upload Card */}
+                <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4 shadow-sm">
+                  <div className="border-b border-slate-100 pb-3">
+                    <h4 className="font-sans font-bold text-xs text-slate-900 flex items-center space-x-2">
+                      <UploadCloud className="h-4 w-4 text-[#0f35a9]" />
+                      <span>Importar Manual Revisado (Word / HTML)</span>
+                    </h4>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Envie o arquivo Word (.doc, .docx) ou Página Web (.html, .htm) que você editou no computador para atualizar o manual.
+                    </p>
+                  </div>
+
+                  {/* Drag and Drop Box */}
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsManualDragOver(true);
+                    }}
+                    onDragLeave={() => setIsManualDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsManualDragOver(false);
+                      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                        handleManualFileSelect(e.dataTransfer.files[0]);
+                      }
+                    }}
+                    onClick={() => document.getElementById('manual-file-input')?.click()}
+                    className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center space-y-2.5 ${
+                      isManualDragOver
+                        ? 'border-indigo-500 bg-indigo-50/40'
+                        : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-indigo-400'
+                    }`}
+                  >
+                    <input
+                      id="manual-file-input"
+                      type="file"
+                      accept=".doc,.docx,.html,.htm,.json"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          handleManualFileSelect(e.target.files[0]);
+                        }
+                      }}
+                      className="hidden"
+                    />
+                    <FileCheck className="h-10 w-10 text-indigo-500 animate-pulse" />
+                    <div>
+                      <p className="text-xs font-bold text-slate-700">
+                        Arraste e solte o arquivo do Word (.doc, .docx) ou Página Web (.html, .htm) editado aqui ou <span className="text-indigo-600 underline">clique para selecionar</span>
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Formatos suportados: Microsoft Word (.docx, .doc), Página Web (.html, .htm) ou JSON (.json) do manual.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Success / Error Alerts */}
+                  {manualImportError && (
+                    <div className="bg-red-50 text-red-900 border border-red-100 p-4 rounded-xl flex items-start space-x-3 text-xs">
+                      <XCircle className="h-5 w-5 text-red-600 flex-shrink-0" />
+                      <div>
+                        <strong className="block font-bold">Falha de Validação:</strong>
+                        <span className="opacity-95">{manualImportError}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {manualImportSuccessMsg && (
+                    <div className="bg-emerald-50 text-emerald-900 border border-emerald-100 p-4 rounded-xl flex items-start space-x-3 text-xs">
+                      <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0" />
+                      <div>
+                        <strong className="block font-bold">Importação Concluída:</strong>
+                        <span className="opacity-95">{manualImportSuccessMsg}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Preview / Confirmation Section */}
+                  {manualImportData && (
+                    <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-5 space-y-4">
+                      <div className="flex justify-between items-center pb-2 border-b border-indigo-100">
+                        <div className="flex items-center space-x-2 text-indigo-900">
+                          <Check className="h-4 w-4 text-indigo-600" />
+                          <h5 className="font-sans font-bold text-xs uppercase tracking-wider">Metadados do Manual Detectado</h5>
+                        </div>
+                        <span className="text-xxs font-bold bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-full uppercase">Pronto para Publicar</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
+                        <div className="bg-white border border-slate-200 p-3 rounded-lg">
+                          <span className="block font-mono font-bold text-base text-slate-800">
+                            {manualImportData.length.toLocaleString('pt-BR')}
+                          </span>
+                          <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Tamanho do Arquivo (Caracteres)</span>
+                        </div>
+                        <div className="bg-white border border-slate-200 p-3 rounded-lg">
+                          <span className="block font-mono font-bold text-base text-slate-800">
+                            {manualImportData.replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length.toLocaleString('pt-BR')}
+                          </span>
+                          <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Total de Palavras Est.</span>
+                        </div>
+                        <div className="bg-white border border-slate-200 p-3 rounded-lg">
+                          <span className="block font-mono font-bold text-base text-slate-800">
+                            {(manualImportData.match(/<img/gi) || []).length}
+                          </span>
+                          <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Imagens Integradas (JPG/PNG)</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-amber-50 text-amber-900 p-3 rounded-lg border border-amber-100 text-xxs flex items-start space-x-2">
+                        <Sparkles className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5 animate-bounce" />
+                        <div>
+                          <strong>Preservação de Imagens e Estilo:</strong> Conforme solicitado, todas as imagens anexadas ou embutidas no documento Word foram detectadas e preservadas intactas (sem edição) para que reflitam perfeitamente nas diretrizes operacionais de pista dos conferentes.
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setManualImportData(null)}
+                          className="flex-1 px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 text-xs font-bold rounded-lg transition cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleExecuteManualImport}
+                          className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition shadow-sm cursor-pointer"
+                        >
+                          Confirmar e Publicar Novo Manual
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

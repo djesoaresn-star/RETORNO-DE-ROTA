@@ -256,5 +256,13 @@ export class AppStore {
   static setAuditLogs(logs: any[]): void {
     setStored('logiroute_audit_logs', logs);
   }
+
+  static getCustomManual(): string {
+    return getStored<string>('logiroute_custom_manual', '');
+  }
+
+  static setCustomManual(html: string): void {
+    setStored('logiroute_custom_manual', html);
+  }
 }
 
