@@ -390,9 +390,10 @@ export default function ConferenteView({
           }
         }
       } else {
-        // If the session was deleted or archived, close it
-        setActiveSession(null);
-        setLoadedSessionTime(undefined);
+        // If the session is not found in the parent audits list, it might be due to temporary sync lag,
+        // local-only creations, or network latency on mobile. To prevent kicking the user out of their
+        // active screen (which they perceive as an automatic restart), we DO NOT set activeSession to null.
+        console.warn("[ConferenteView] Active session not found in parent audits. Retaining local session in memory.");
       }
     }
   }, [audits, activeSession?.id, loadedSessionTime, currentUser.name, activeAssets]);

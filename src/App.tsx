@@ -18,6 +18,7 @@ export default function App() {
   const lastWriteTime = useRef<number>(0);
   const pendingUpdatesRef = useRef<any>({});
   const pushTimeoutRef = useRef<any>(null);
+  const lastSyncAlertTime = useRef<number>(0);
   // Database states loaded from AppStore
   const [users, setUsers] = useState<User[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
@@ -136,7 +137,7 @@ export default function App() {
       clearTimeout(pushTimeoutRef.current);
     }
 
-    // Schedule single POST request for the end of the current microtask batch (e.g., 50ms)
+    // Schedule single POST request after a reasonable quiet period (e.g., 2500ms) to bundle edits and save bandwidth
     pushTimeoutRef.current = setTimeout(async () => {
       const payload = { ...pendingUpdatesRef.current };
       pendingUpdatesRef.current = {}; // Clear accumulator
@@ -199,10 +200,15 @@ export default function App() {
             ...payload,
             ...pendingUpdatesRef.current
           };
-          alert("Aviso: Falha ao sincronizar as alterações com o servidor. Verifique sua conexão com a internet. O aplicativo continuará tentando em segundo plano.");
+          
+          // Throttle the intrusive sync warning to maximum once per 60 seconds to avoid spamming the user during flaky network
+          if (Date.now() - lastSyncAlertTime.current > 60000) {
+            lastSyncAlertTime.current = Date.now();
+            alert("Aviso: Falha ao sincronizar as alterações com o servidor. Verifique sua conexão com a internet. O aplicativo continuará tentando em segundo plano.");
+          }
         }
       }
-    }, 50);
+    }, 2500);
   };
 
   // Helper to repair missing or broken product descriptions

@@ -2379,14 +2379,14 @@ export default function FiscalView({
           doc.setFontSize(7.5);
           doc.text(`${item.productCode}`, 16, currentY + 4.5);
           doc.text(`${(item.productDescription || '').substring(0, 48)}`, 32, currentY + 4.5);
-          doc.text(`${physicalVal} un`, 125, currentY + 4.5);
-          doc.text(`${fiscalVal} un`, 145, currentY + 4.5);
+          doc.text(`${physicalVal} SKU`, 125, currentY + 4.5);
+          doc.text(`${fiscalVal} SKU`, 145, currentY + 4.5);
           
           if (diff !== 0) {
             doc.setFont("Helvetica", "bold");
             doc.setTextColor(diff < 0 ? 220 : 217, diff < 0 ? 38 : 119, diff < 0 ? 38 : 6);
           }
-          doc.text(`${diffText} un`, 168, currentY + 4.5);
+          doc.text(`${diffText} SKU`, 168, currentY + 4.5);
           doc.setFont("Helvetica", "normal");
           doc.setTextColor(51, 65, 85);
           
