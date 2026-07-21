@@ -15,32 +15,29 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Setup Java (JDK 17)
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'npm'
 
       - name: Install Web Dependencies
-        run: npm ci || npm install
+        run: npm install
 
       - name: Build Web App (Vite)
         run: npm run build
         env:
           NODE_ENV: production
-
-      - name: Setup Bubblewrap CLI
-        run: npm install -g @bubblewrap/cli
 
       - name: Build Android APK with Bubblewrap
         run: |
@@ -74,6 +71,7 @@ jobs:
           git add public/guarabira_acuracidade_v2.1.0.apk
           git diff-index --quiet HEAD || git commit -m "chore(build): auto-update compiled android apk [skip ci]"
           git push origin HEAD:${{ github.ref }} || echo "No changes to commit or permission denied."
+        continue-on-error: true
 
       - name: Create automatic release tag
         id: create_tag
@@ -82,9 +80,11 @@ jobs:
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
           git tag $TAG_NAME
           git push origin $TAG_NAME || echo "Tag already exists"
+        continue-on-error: true
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
         with:
           tag_name: "v2.1.0-build-${{ github.run_number }}"
           name: "Versão Operacional v2.1.0 (Build ${{ github.run_number }})"
