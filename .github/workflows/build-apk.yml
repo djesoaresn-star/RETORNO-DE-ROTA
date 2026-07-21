@@ -6,6 +6,9 @@ on:
       - main
       - master
 
+permissions:
+  contents: write
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -51,12 +54,7 @@ jobs:
             
             # Write a mock bubblewrap configuration if files do not exist
             mkdir -p .bubblewrap
-            cat <<EOF > .bubblewrap/config.json
-            {
-              "jdkPath": "/usr/lib/jvm/zulu17",
-              "androidSdkPath": "/usr/local/lib/android/sdk"
-            }
-          EOF
+            echo '{"jdkPath": "/usr/lib/jvm/zulu17", "androidSdkPath": "/usr/local/lib/android/sdk"}' > .bubblewrap/config.json
           else
             echo "Signing keys detected in Secrets. Decoding..."
             echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > release.keystore
