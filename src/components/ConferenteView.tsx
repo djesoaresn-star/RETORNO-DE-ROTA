@@ -934,8 +934,12 @@ export default function ConferenteView({
       alert('Por favor, selecione um produto.');
       return;
     }
-    const qty = Number(productQtyToAdd) || 0;
-    if (qty <= 0) {
+    const qty = Number(productQtyToAdd);
+    if (isNaN(qty) || qty < 0) {
+      alert('Por favor, informe uma quantidade válida.');
+      return;
+    }
+    if (activeSession.status !== 'reconferencia' && qty <= 0) {
       alert('Por favor, informe uma quantidade maior que zero.');
       return;
     }

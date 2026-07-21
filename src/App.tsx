@@ -137,7 +137,7 @@ export default function App() {
       clearTimeout(pushTimeoutRef.current);
     }
 
-    // Schedule single POST request after a reasonable quiet period (e.g., 2500ms) to bundle edits and save bandwidth
+    // Schedule single POST request after a short quiet period (300ms) to ensure fast persistence while bundling rapid keypresses
     pushTimeoutRef.current = setTimeout(async () => {
       const payload = { ...pendingUpdatesRef.current };
       pendingUpdatesRef.current = {}; // Clear accumulator
@@ -150,7 +150,7 @@ export default function App() {
         
         const saveToServer = async (pld: any) => {
           let attempts = 3;
-          let delay = 500;
+          let delay = 300;
           let srvSuccess = false;
           
           for (let i = 0; i < attempts; i++) {
@@ -208,7 +208,7 @@ export default function App() {
           }
         }
       }
-    }, 2500);
+    }, 300);
   };
 
   // Helper to repair missing or broken product descriptions
@@ -282,14 +282,80 @@ export default function App() {
       AppStore.setProducts(repaired);
     }
     if (db.activeAssets) { setActiveAssets(db.activeAssets); AppStore.setActiveAssets(db.activeAssets); }
-    if (db.audits) { const cleaned = cleanAudits(db.audits); setAudits(cleaned); AppStore.setAudits(cleaned); }
+    if (db.audits) {
+      const cleaned = cleanAudits(db.audits);
+      const localAudits = AppStore.getAudits() || [];
+      const mergedMap = new Map<string, AuditSession>();
+      cleaned.forEach(a => mergedMap.set(a.id, a));
+      localAudits.forEach(localA => {
+        const remoteA = mergedMap.get(localA.id);
+        if (!remoteA) {
+          mergedMap.set(localA.id, localA);
+        } else {
+          const remoteTime = remoteA.updatedAt ? new Date(remoteA.updatedAt).getTime() : 0;
+          const localTime = localA.updatedAt ? new Date(localA.updatedAt).getTime() : 0;
+          if (localTime > remoteTime) {
+            mergedMap.set(localA.id, localA);
+          }
+        }
+      });
+      const mergedAudits = Array.from(mergedMap.values());
+      setAudits(mergedAudits);
+      AppStore.setAudits(mergedAudits);
+    }
     if (db.vales) { const cleaned = cleanVales(db.vales); setVales(cleaned); AppStore.setVales(cleaned); }
     if (db.returnForecasts) { const cleaned = cleanReturnForecasts(db.returnForecasts); setReturnForecasts(cleaned); AppStore.setReturnForecasts(cleaned); }
     if (db.fiscalAlerts) { setFiscalAlerts(db.fiscalAlerts); AppStore.setFiscalAlerts(db.fiscalAlerts); }
-    if (db.importedRoutes) { const cleaned = cleanImportedRoutes(db.importedRoutes); setImportedRoutes(cleaned); AppStore.setImportedRoutes(cleaned); }
+    if (db.importedRoutes) {
+      const cleaned = cleanImportedRoutes(db.importedRoutes);
+      const localRoutes = AppStore.getImportedRoutes() || [];
+      const routeMap = new Map<string, ImportedRoute>();
+      cleaned.forEach(r => routeMap.set(r.id, r));
+      localRoutes.forEach(lr => {
+        if (!routeMap.has(lr.id)) {
+          routeMap.set(lr.id, lr);
+        }
+      });
+      const mergedRoutes = Array.from(routeMap.values());
+      setImportedRoutes(mergedRoutes);
+      AppStore.setImportedRoutes(mergedRoutes);
+    }
     if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
     if (db.customManual !== undefined) { setCustomManualHTML(db.customManual); AppStore.setCustomManual(db.customManual); }
   };
+
+  // Immediate flush of pending database updates on page reload / unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (pushTimeoutRef.current) {
+        clearTimeout(pushTimeoutRef.current);
+        pushTimeoutRef.current = null;
+      }
+      const payload = { ...pendingUpdatesRef.current };
+      if (Object.keys(payload).length > 0) {
+        pendingUpdatesRef.current = {};
+        if (isClientFirebaseActive()) {
+          saveDirectlyToFirestore(payload);
+        } else {
+          try {
+            fetch('/api/db', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ db: payload }),
+              keepalive: true
+            }).catch(() => {});
+          } catch (e) {
+            // ignore unload fetch error
+          }
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
 
   // Load all databases from store on mount and establish server sync
   useEffect(() => {

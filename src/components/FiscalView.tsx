@@ -2090,6 +2090,17 @@ export default function FiscalView({
         updatedAlerts = [newAlert, ...updatedAlerts];
 
         onSaveAudits(updatedAudits);
+        if (onSaveImportedRoutes && importedRoutes) {
+          const updatedRoutes = importedRoutes.map(r => {
+            const isMatched = r.routeMap.toUpperCase() === targetAudit.routeMap.toUpperCase() ||
+              (targetAudit.unifiedMaps && targetAudit.unifiedMaps.some(m => m.toUpperCase() === r.routeMap.toUpperCase()));
+            if (isMatched) {
+              return { ...r, status: 'em_analise' as const };
+            }
+            return r;
+          });
+          onSaveImportedRoutes(updatedRoutes);
+        }
         if (onSaveAlerts) {
           onSaveAlerts(updatedAlerts);
         }
@@ -6742,18 +6753,30 @@ export default function FiscalView({
                   </div>
                 </div>
 
-                {activeSession.items.length === 0 ? (
-                  <div className="text-center py-8 bg-slate-50 rounded-lg text-slate-400 text-xs">
-                    Nenhum produto acabado lançado pelo conferente.
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {[...activeSession.items].sort((a, b) => {
-                      const numA = Number(a.productCode);
-                      const numB = Number(b.productCode);
-                      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-                      return a.productCode.localeCompare(b.productCode);
-                    }).map((item) => {
+                {(() => {
+                  const visibleItems = activeSession.items.filter(item => {
+                    const physical = item.rePhysicalQty !== undefined ? item.rePhysicalQty : item.physicalQty;
+                    const hasPhysicalEntry = (physical > 0) || (item.rePhysicalQty !== undefined);
+                    const hasFiscalEntry = (item.fiscalQty ?? 0) > 0;
+                    return hasPhysicalEntry || hasFiscalEntry;
+                  });
+
+                  if (visibleItems.length === 0) {
+                    return (
+                      <div className="text-center py-8 bg-slate-50 rounded-lg text-slate-400 text-xs">
+                        Nenhum produto acabado lançado pelo conferente ou cadastrado no fiscal.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-4">
+                      {[...visibleItems].sort((a, b) => {
+                        const numA = Number(a.productCode);
+                        const numB = Number(b.productCode);
+                        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+                        return a.productCode.localeCompare(b.productCode);
+                      }).map((item) => {
                       const physical = item.rePhysicalQty !== undefined ? item.rePhysicalQty : item.physicalQty;
                       const fiscal = item.fiscalQty ?? 0;
                       const diff = physical - fiscal;
@@ -6861,7 +6884,8 @@ export default function FiscalView({
                       );
                     })}
                   </div>
-                )}
+                );
+              })()}
               </div>
 
               {/* Active Circulation Assets Reconciliation */}
