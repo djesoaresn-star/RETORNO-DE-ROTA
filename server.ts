@@ -1686,8 +1686,35 @@ async function startServer() {
         const db = await readDatabaseFile();
         dbCache = db || {};
       }
-      let photos = dbCache.photos || [];
       const { auditId } = req.query;
+
+      // If Firestore is active, query it to ensure the server is fully up to date with any direct client-side photo uploads
+      if (firestoreDb && !firestoreQuotaExceeded && auditId) {
+        try {
+          const { query, where, getDocs, collection } = await import("firebase/firestore");
+          const photosCol = collection(firestoreDb, "photos");
+          const q = query(photosCol, where("auditId", "==", auditId));
+          const snap = await getDocs(q);
+          const fsPhotos: any[] = [];
+          snap.forEach((docSnap) => {
+            fsPhotos.push(docSnap.data());
+          });
+
+          if (fsPhotos.length > 0) {
+            if (!dbCache.photos) dbCache.photos = [];
+            const existingPhotosMap = new Map(dbCache.photos.map((p: any) => [p.id, p]));
+            fsPhotos.forEach(p => {
+              existingPhotosMap.set(p.id, p);
+            });
+            dbCache.photos = Array.from(existingPhotosMap.values());
+            await writeDatabaseFile(dbCache, []);
+          }
+        } catch (fsErr) {
+          console.warn("[Server] Erro ao buscar fotos sincronizadas do Firestore:", fsErr);
+        }
+      }
+
+      let photos = dbCache.photos || [];
       if (auditId) {
         photos = photos.filter((p: any) => p.auditId === auditId);
       }

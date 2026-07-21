@@ -4,7 +4,7 @@
  * Falls back to highly resilient in-memory storage if IndexedDB is disabled, blocked or sandboxed in an iframe.
  */
 
-import { isClientFirebaseActive, getClientFirestore } from './clientFirebase';
+import { isClientFirebaseActive, getClientFirestore, isQuotaError, setFirestoreQuotaExceeded } from './clientFirebase';
 import { doc, setDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
 export interface PhotoRecord {
@@ -116,11 +116,16 @@ export class ImageDB {
             isSynced = true;
           } catch (fsErr) {
             console.warn('[ImageDB] Falha na gravação direta do Firestore para nova foto. Tentando fallback via API do servidor...', fsErr);
+            if (isQuotaError(fsErr)) {
+              setFirestoreQuotaExceeded(true);
+            }
           }
         }
       }
 
-      if (!isSynced) {
+      // ALWAYS replicate to the backend server API to ensure photos are cached on disk,
+      // registered in the server database cache, and available for PDF generation & non-client-firebase users.
+      try {
         const res = await fetch('/api/photos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -133,6 +138,8 @@ export class ImageDB {
             isSynced = true;
           }
         }
+      } catch (srvErr) {
+        console.warn('[ImageDB] Falha na réplica para a API de fotos do servidor:', srvErr);
       }
 
       if (isSynced) {
@@ -192,6 +199,9 @@ export class ImageDB {
               isSynced = true;
             } catch (fsErr) {
               console.warn(`[ImageDB] Falha na gravação direta do Firestore para foto pendente ${p.id}. Tentando fallback via API do servidor...`, fsErr);
+              if (isQuotaError(fsErr)) {
+                setFirestoreQuotaExceeded(true);
+              }
             }
           }
 
@@ -497,6 +507,9 @@ export class ImageDB {
       }
     } catch (e) {
       console.log("Error querying server photos.", e);
+      if (isQuotaError(e)) {
+        setFirestoreQuotaExceeded(true);
+      }
     }
     return [];
   }
@@ -628,6 +641,9 @@ export class ImageDB {
       }
     } catch (e) {
       console.log("Error querying all server photos.", e);
+      if (isQuotaError(e)) {
+        setFirestoreQuotaExceeded(true);
+      }
     }
     return [];
   }
@@ -668,6 +684,9 @@ export class ImageDB {
       }
     } catch (e) {
       console.log('Server file deletion bypassed in background.', e);
+      if (isQuotaError(e)) {
+        setFirestoreQuotaExceeded(true);
+      }
     }
   }
 

@@ -5,7 +5,7 @@ import {
   LogOut, FileSpreadsheet, Bell, Check, Clock, AlertCircle, FileText,
   Sun, Moon, Folder, Smartphone, Download
 } from 'lucide-react';
-import { isClientFirebaseActive, getFirebaseConnectionState } from '../clientFirebase';
+import { isClientFirebaseActive, getFirebaseConnectionState, getIsFirestoreQuotaExceeded } from '../clientFirebase';
 
 interface HeaderProps {
   currentUser: User;
@@ -46,6 +46,7 @@ export default function Header({
 
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [firebaseStatus, setFirebaseStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState(getIsFirestoreQuotaExceeded());
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -80,6 +81,12 @@ export default function Header({
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
+    const handleQuotaExceeded = () => setIsQuotaExceeded(true);
+    const handleQuotaRestored = () => setIsQuotaExceeded(false);
+
+    window.addEventListener('firestore_quota_exceeded', handleQuotaExceeded);
+    window.addEventListener('firestore_quota_restored', handleQuotaRestored);
+
     // Initial check
     if (navigator.onLine) {
       checkFirebaseActive();
@@ -99,6 +106,8 @@ export default function Header({
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('firestore_quota_exceeded', handleQuotaExceeded);
+      window.removeEventListener('firestore_quota_restored', handleQuotaRestored);
       clearInterval(interval);
     };
   }, []);
@@ -342,34 +351,45 @@ export default function Header({
             <div className="flex items-center space-x-3">
               {/* Firebase Connection Status Badge */}
               <div className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-bold border transition-all duration-300 shadow-xs ${
-                firebaseStatus === 'connected' 
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                  : firebaseStatus === 'connecting'
-                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                    : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                isQuotaExceeded
+                  ? 'bg-amber-500/15 text-amber-500 border-amber-500/30 animate-pulse'
+                  : firebaseStatus === 'connected' 
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                    : firebaseStatus === 'connecting'
+                      ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                      : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
               }`} title={
-                firebaseStatus === 'connected' 
-                  ? 'Sincronização Ativa com Firebase' 
-                  : firebaseStatus === 'connecting'
-                    ? 'Reconectando ao Firebase...'
-                    : 'Sem conexão com Firebase / Offline'
+                isQuotaExceeded
+                  ? 'Cota do Firebase Excedida - Operando via Servidor Local de Segurança'
+                  : firebaseStatus === 'connected' 
+                    ? 'Sincronização Ativa com Firebase' 
+                    : firebaseStatus === 'connecting'
+                      ? 'Reconectando ao Firebase...'
+                      : 'Sem conexão com Firebase / Offline'
               }>
                 <span className="relative flex h-1.5 w-1.5 shrink-0">
-                  {firebaseStatus === 'connected' && (
+                  {isQuotaExceeded && (
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  )}
+                  {firebaseStatus === 'connected' && !isQuotaExceeded && (
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   )}
-                  {firebaseStatus === 'connecting' && (
+                  {firebaseStatus === 'connecting' && !isQuotaExceeded && (
                     <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                   )}
                   <span className={`relative inline-flex rounded-full h-1.5 w-1.5 transition-all duration-300 ${
-                    firebaseStatus === 'connected' 
-                      ? 'bg-emerald-500' 
-                      : firebaseStatus === 'connecting' 
-                        ? 'bg-amber-500' 
-                        : 'bg-rose-500'
+                    isQuotaExceeded
+                      ? 'bg-amber-500'
+                      : firebaseStatus === 'connected' 
+                        ? 'bg-emerald-500' 
+                        : firebaseStatus === 'connecting' 
+                          ? 'bg-amber-500' 
+                          : 'bg-rose-500'
                   }`}></span>
                 </span>
-                <span className="uppercase tracking-wider text-[9px]">Firebase</span>
+                <span className="uppercase tracking-wider text-[9px]">
+                  {isQuotaExceeded ? 'Cota Excedida / Servidor Local' : 'Firebase'}
+                </span>
               </div>
 
               {/* Active User Badge / Context */}

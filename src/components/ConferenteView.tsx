@@ -1190,7 +1190,7 @@ export default function ConferenteView({
     setTimeout(() => {
       const isReconferindo = updatedSession.status === 'reconferencia';
       const now = new Date().toISOString();
-      const nextStatus = 'conferido_fisico';
+      const nextStatus = isReconferindo ? 'recontagem_finalizada' : 'conferido_fisico';
       const actionText = isReconferindo ? 'Reconferência Física Finalizada' : 'Conferência Física Finalizada';
       const detailsText = isReconferindo 
         ? `Re-conferido com ${sessionPhotos.length} fotos salvas como prova. Veículo em blitz.` 
@@ -1282,7 +1282,7 @@ export default function ConferenteView({
     }
 
     const now = new Date().toISOString();
-    const nextStatus = 'conferido_fisico';
+    const nextStatus = isReconferindo ? 'recontagem_finalizada' : 'conferido_fisico';
     const actionText = isReconferindo ? 'Reconferência Física Finalizada' : 'Conferência Física Finalizada';
     const detailsText = isReconferindo 
       ? `Re-conferido com ${sessionPhotos.length} fotos salvas como prova.` 

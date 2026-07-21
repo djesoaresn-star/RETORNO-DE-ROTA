@@ -1,7 +1,14 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { initializeFirestore, doc, getDoc, setDoc, deleteDoc, collection, onSnapshot } from "firebase/firestore";
+import { initializeFirestore, doc, getDoc, setDoc, deleteDoc, collection, onSnapshot, terminate, setLogLevel } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
 import firebaseConfig from "../firebase-applet-config.json";
+
+// Silence verbose or harmless Firestore warnings/info logs in browser
+try {
+  setLogLevel("silent");
+} catch (e) {
+  // ignore
+}
 
 // Shared DB keys for state tracking
 const DB_KEYS = [
@@ -17,6 +24,76 @@ let clientAuthError: string | null = null;
 let lastAuthAttemptTime = 0;
 const AUTH_COOLDOWN_MS = 25000; // 25 seconds cooldown to prevent auth/too-many-requests loop
 let lastSuccessfulSyncTime = 0;
+
+let isFirestoreQuotaExceeded = false;
+
+// Check localStorage on load for quota timestamp
+if (typeof window !== "undefined") {
+  const ts = localStorage.getItem('firestore_quota_exceeded_timestamp');
+  if (ts) {
+    const elapsed = Date.now() - Number(ts);
+    // Quota resets daily, let's keep it active for 12 hours unless manually reset/retried
+    if (elapsed < 12 * 60 * 60 * 1000) {
+      isFirestoreQuotaExceeded = true;
+      console.warn("[ClientFirebase] Carregado estado de cota do Firestore excedida do cache local.");
+    } else {
+      localStorage.removeItem('firestore_quota_exceeded_timestamp');
+    }
+  }
+}
+
+export function getIsFirestoreQuotaExceeded(): boolean {
+  return isFirestoreQuotaExceeded;
+}
+
+export function setFirestoreQuotaExceeded(val: boolean) {
+  isFirestoreQuotaExceeded = val;
+  if (val) {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('firestore_quota_exceeded_timestamp', String(Date.now()));
+      
+      // Terminate active client-side instance to stop background retry loops/listeners
+      if (firestoreInstance) {
+        try {
+          console.warn("[ClientFirebase] Encerrando instância ativa do Firestore devido ao limite de cota...");
+          terminate(firestoreInstance).catch((e) => {
+            console.warn("[ClientFirebase] Erro ao desligar Firestore:", e);
+          });
+        } catch (e) {
+          console.warn("[ClientFirebase] Exceção ao desligar Firestore:", e);
+        }
+        firestoreInstance = null;
+      }
+
+      // Emit a custom event to notify components immediately
+      window.dispatchEvent(new Event('firestore_quota_exceeded'));
+    }
+  } else {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('firestore_quota_exceeded_timestamp');
+      window.dispatchEvent(new Event('firestore_quota_restored'));
+    }
+  }
+}
+
+export function isQuotaError(err: any): boolean {
+  if (!err) return false;
+  const msg = String(err.message || err.code || err).toLowerCase();
+  return (
+    err.code === "resource-exhausted" ||
+    msg.includes("quota exceeded") ||
+    msg.includes("quota-exceeded") ||
+    msg.includes("resource-exhausted") ||
+    msg.includes("quota limit exceeded")
+  );
+}
+
+function checkQuotaError(err: any) {
+  if (err && isQuotaError(err)) {
+    console.warn("[ClientFirebase] Cota do Firestore excedida detectada! Alternando para modo local...");
+    setFirestoreQuotaExceeded(true);
+  }
+}
 
 export function getClientAuthError(): string | null {
   return clientAuthError;
@@ -158,17 +235,22 @@ export function subscribeToFirestore(onUpdate: (db: any) => void): () => void {
       }
     }, (error) => {
       console.error("[ClientFirebase] Erro na inscrição em tempo real do Firestore:", error);
+      checkQuotaError(error);
     });
 
     return unsubscribe;
   } catch (err) {
     console.error("[ClientFirebase] Erro ao registrar onSnapshot no Firestore:", err);
+    checkQuotaError(err);
     return () => {};
   }
 }
 
 // Get or initialize the direct client Firestore instance
 export function getClientFirestore() {
+  if (isFirestoreQuotaExceeded) {
+    return null;
+  }
   if (firestoreInstance) {
     if (!isAuthenticated && !isAuthenticating) {
       triggerAnonymousAuth();
@@ -275,6 +357,7 @@ export async function fetchDirectlyFromFirestore(): Promise<any> {
         }
       } catch (err) {
         console.warn(`[ClientFirebase] Erro ao ler documento '${key}' do Firestore:`, err);
+        checkQuotaError(err);
       }
     });
 
@@ -282,6 +365,7 @@ export async function fetchDirectlyFromFirestore(): Promise<any> {
     return combinedDb;
   } catch (e) {
     console.error("[ClientFirebase] Falha crítica ao ler do Firestore diretamente:", e);
+    checkQuotaError(e);
     return null;
   }
 }
@@ -343,6 +427,7 @@ export async function saveDirectlyToFirestore(payload: any): Promise<boolean> {
     return true;
   } catch (e) {
     console.error("[ClientFirebase] Falha ao persistir alterações no Firestore:", e);
+    checkQuotaError(e);
     return false;
   }
 }
@@ -360,6 +445,7 @@ export async function getGeminiKeyFromFirestore(): Promise<string | null> {
     }
   } catch (e) {
     console.warn("[ClientFirebase] Erro ao carregar chave do Gemini do Firestore:", e);
+    checkQuotaError(e);
   }
   return null;
 }
@@ -374,6 +460,7 @@ export async function saveGeminiKeyToFirestore(apiKey: string): Promise<boolean>
     return true;
   } catch (e) {
     console.error("[ClientFirebase] Erro ao salvar chave do Gemini no Firestore:", e);
+    checkQuotaError(e);
     return false;
   }
 }

@@ -3,7 +3,7 @@ import { User, Driver, Vehicle, Product, ActiveAsset, AuditSession, ReturnForeca
 import { AppStore } from './store';
 import { DEFAULT_PRODUCTS } from './data';
 import { ImageDB } from './imageDb';
-import { isClientFirebaseActive, fetchDirectlyFromFirestore, saveDirectlyToFirestore, subscribeToFirestore, getClientAuthError } from './clientFirebase';
+import { isClientFirebaseActive, fetchDirectlyFromFirestore, saveDirectlyToFirestore, subscribeToFirestore, getClientAuthError, getIsFirestoreQuotaExceeded, setFirestoreQuotaExceeded } from './clientFirebase';
 import Header from './components/Header';
 import ConferenteView from './components/ConferenteView';
 import FiscalView from './components/FiscalView';
@@ -12,7 +12,7 @@ import LoginView from './components/LoginView';
 import MonitoramentoView from './components/MonitoramentoView';
 import PlatformManual from './components/PlatformManual';
 import AIAgentChat from './components/AIAgentChat';
-import { ClipboardCheck, ShieldCheck, BarChart3, AlertCircle, Bell, CheckCircle2 } from 'lucide-react';
+import { ClipboardCheck, ShieldCheck, BarChart3, AlertCircle, Bell, CheckCircle2, Settings, RefreshCw } from 'lucide-react';
 
 export default function App() {
   const lastWriteTime = useRef<number>(0);
@@ -40,6 +40,22 @@ export default function App() {
     return localStorage.getItem('logiroute_is_authenticated') === 'true';
   });
   const [activeTab, setActiveTab] = useState<string>('conferencias');
+
+  // Quota status state
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState(getIsFirestoreQuotaExceeded());
+
+  useEffect(() => {
+    const handleQuotaExceeded = () => setIsQuotaExceeded(true);
+    const handleQuotaRestored = () => setIsQuotaExceeded(false);
+
+    window.addEventListener('firestore_quota_exceeded', handleQuotaExceeded);
+    window.addEventListener('firestore_quota_restored', handleQuotaRestored);
+    
+    return () => {
+      window.removeEventListener('firestore_quota_exceeded', handleQuotaExceeded);
+      window.removeEventListener('firestore_quota_restored', handleQuotaRestored);
+    };
+  }, []);
 
   // Theme state
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -794,6 +810,46 @@ export default function App() {
         theme={theme}
         onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
       />
+
+      {/* Quota Exceeded Warning Banner */}
+      {isQuotaExceeded && (
+        <div className="bg-amber-500/10 border-b border-amber-500/20 text-amber-800 dark:text-amber-200 py-3.5 px-4" id="firestore_quota_warning_banner">
+          <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold block text-sm">Cota Diária Gratuita do Firebase Excedida</span>
+                <span className="text-xs text-slate-600 dark:text-slate-300">
+                  O limite diário gratuito do Firestore foi atingido. Ativamos o <strong>Modo de Sincronização Segura via Servidor Local</strong> para garantir que você continue trabalhando normalmente sem perder nenhum dado. As atualizações e fotos estão sendo salvas localmente no servidor e serão sincronizadas quando a cota reiniciar (amanhã).
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+              <button
+                onClick={() => {
+                  console.log("[App] Forçando re-tentativa de conexão direta com o Firebase...");
+                  setFirestoreQuotaExceeded(false);
+                  // Refreshing window triggers reconnection instantly
+                  window.location.reload();
+                }}
+                className="bg-white/10 hover:bg-white/20 dark:bg-white/5 dark:hover:bg-white/10 text-amber-900 dark:text-amber-100 text-xs font-semibold py-1.5 px-3 rounded-md border border-amber-500/20 transition-all flex items-center gap-1 cursor-pointer"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Tentar Sincronizar
+              </button>
+              <a 
+                href="https://console.firebase.google.com/project/scenic-year-l5xj8/firestore/databases/ai-studio-remixremixremixr-d6b6b17f-3b26-4b81-839e-531e01666411/data?openUpgradeDialog=true"
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold py-1.5 px-3 rounded-md shadow-xs transition-colors whitespace-nowrap inline-flex items-center gap-1 cursor-pointer"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                Upgrade no Firebase Console
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Workspace Routing based on Profile & Tab */}
       <main className="flex-grow">
