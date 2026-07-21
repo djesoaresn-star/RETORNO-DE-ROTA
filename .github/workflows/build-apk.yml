@@ -32,7 +32,9 @@ jobs:
           cache: 'npm'
 
       - name: Install Web Dependencies
-        run: npm install
+        run: |
+          rm -f package-lock.json
+          npm install
 
       - name: Build Web App (Vite)
         run: npm run build

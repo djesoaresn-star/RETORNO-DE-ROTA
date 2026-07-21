@@ -34,7 +34,9 @@ jobs:
           cache: 'npm'
 
       - name: Instalar dependências
-        run: npm install
+        run: |
+          rm -f package-lock.json
+          npm install
 
       - name: Compilar projeto (Vite Build)
         run: npm run build
