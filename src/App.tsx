@@ -81,27 +81,49 @@ export default function App() {
   });
 
   const handleResetPlatformData = async () => {
-    // Clear major functional arrays
+    // Clear major functional arrays in state
     setImportedRoutes([]);
     setAudits([]);
     setReturnForecasts([]);
     setFiscalAlerts([]);
     setVales([]);
 
+    // Clear local storage
     AppStore.setImportedRoutes([]);
     AppStore.setAudits([]);
     AppStore.setReturnForecasts([]);
     AppStore.setFiscalAlerts([]);
     AppStore.setVales([]);
 
-    // Push cleared state to backend
-    await pushDatabaseToServer({
+    // Cancel pending throttled writes
+    pendingUpdatesRef.current = {};
+    if (pushTimeoutRef.current) {
+      clearTimeout(pushTimeoutRef.current);
+      pushTimeoutRef.current = null;
+    }
+    lastWriteTime.current = Date.now();
+
+    const emptyPayload = {
       importedRoutes: [],
       audits: [],
       returnForecasts: [],
       fiscalAlerts: [],
       vales: [],
-    });
+    };
+
+    if (isClientFirebaseActive()) {
+      await saveDirectlyToFirestore(emptyPayload);
+    }
+
+    try {
+      await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ db: emptyPayload })
+      });
+    } catch (e) {
+      console.warn("Reset server push error:", e);
+    }
   };
 
   const handleSaveCustomManual = (html: string) => {
@@ -265,6 +287,9 @@ export default function App() {
   };
 
   const applyDirectDb = (db: any) => {
+    if (!db) return;
+    lastWriteTime.current = Date.now();
+
     if (db.users && db.users.length > 0) {
       setUsers(db.users);
       AppStore.setUsers(db.users);
@@ -282,43 +307,29 @@ export default function App() {
       AppStore.setProducts(repaired);
     }
     if (db.activeAssets) { setActiveAssets(db.activeAssets); AppStore.setActiveAssets(db.activeAssets); }
-    if (db.audits) {
+    if (db.audits !== undefined) {
       const cleaned = cleanAudits(db.audits);
-      const localAudits = AppStore.getAudits() || [];
-      const mergedMap = new Map<string, AuditSession>();
-      cleaned.forEach(a => mergedMap.set(a.id, a));
-      localAudits.forEach(localA => {
-        const remoteA = mergedMap.get(localA.id);
-        if (!remoteA) {
-          mergedMap.set(localA.id, localA);
-        } else {
-          const remoteTime = remoteA.updatedAt ? new Date(remoteA.updatedAt).getTime() : 0;
-          const localTime = localA.updatedAt ? new Date(localA.updatedAt).getTime() : 0;
-          if (localTime > remoteTime) {
-            mergedMap.set(localA.id, localA);
-          }
-        }
-      });
-      const mergedAudits = Array.from(mergedMap.values());
-      setAudits(mergedAudits);
-      AppStore.setAudits(mergedAudits);
+      setAudits(cleaned);
+      AppStore.setAudits(cleaned);
     }
-    if (db.vales) { const cleaned = cleanVales(db.vales); setVales(cleaned); AppStore.setVales(cleaned); }
-    if (db.returnForecasts) { const cleaned = cleanReturnForecasts(db.returnForecasts); setReturnForecasts(cleaned); AppStore.setReturnForecasts(cleaned); }
-    if (db.fiscalAlerts) { setFiscalAlerts(db.fiscalAlerts); AppStore.setFiscalAlerts(db.fiscalAlerts); }
-    if (db.importedRoutes) {
+    if (db.vales !== undefined) {
+      const cleaned = cleanVales(db.vales);
+      setVales(cleaned);
+      AppStore.setVales(cleaned);
+    }
+    if (db.returnForecasts !== undefined) {
+      const cleaned = cleanReturnForecasts(db.returnForecasts);
+      setReturnForecasts(cleaned);
+      AppStore.setReturnForecasts(cleaned);
+    }
+    if (db.fiscalAlerts !== undefined) {
+      setFiscalAlerts(db.fiscalAlerts);
+      AppStore.setFiscalAlerts(db.fiscalAlerts);
+    }
+    if (db.importedRoutes !== undefined) {
       const cleaned = cleanImportedRoutes(db.importedRoutes);
-      const localRoutes = AppStore.getImportedRoutes() || [];
-      const routeMap = new Map<string, ImportedRoute>();
-      cleaned.forEach(r => routeMap.set(r.id, r));
-      localRoutes.forEach(lr => {
-        if (!routeMap.has(lr.id)) {
-          routeMap.set(lr.id, lr);
-        }
-      });
-      const mergedRoutes = Array.from(routeMap.values());
-      setImportedRoutes(mergedRoutes);
-      AppStore.setImportedRoutes(mergedRoutes);
+      setImportedRoutes(cleaned);
+      AppStore.setImportedRoutes(cleaned);
     }
     if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
     if (db.customManual !== undefined) { setCustomManualHTML(db.customManual); AppStore.setCustomManual(db.customManual); }
@@ -422,10 +433,8 @@ export default function App() {
           return;
         }
         if (isClientFirebaseActive()) {
-          const directDb = await fetchDirectlyFromFirestore();
-          if (directDb) {
-            applyDirectDb(directDb);
-          }
+          // Native onSnapshot handles real-time updates directly.
+          // Skipping polling avoids redundant reads and prevents hitting Firestore rate limit.
           return;
         }
         const res = await fetch('/api/db');
