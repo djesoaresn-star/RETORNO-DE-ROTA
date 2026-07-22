@@ -6300,8 +6300,10 @@ export default function GestorDashboard({
                 
                 {/* Dashboard summary stats for maps */}
                 {(() => {
-                  const uniqueDates = Array.from(new Set(importedRoutes.map(r => r.routeDate))).sort();
-                  const selectedDateRoutes = importedRoutes.filter(r => r.routeDate === importDateFilter);
+                  const uniqueDates = Array.from(new Set(importedRoutes.map(r => r.routeDate).filter(Boolean))).sort();
+                  const selectedDateRoutes = importDateFilter === 'all'
+                    ? importedRoutes
+                    : importedRoutes.filter(r => r.routeDate === importDateFilter);
                   
                   const totalCount = selectedDateRoutes.length;
                   const closedCount = selectedDateRoutes.filter(r => r.status === 'fechado').length;
@@ -6317,7 +6319,7 @@ export default function GestorDashboard({
                           <FileSpreadsheet className="h-6 w-6 text-emerald-600" />
                           <div>
                             <h3 className="font-sans font-bold text-slate-900 text-sm uppercase">Sincronizador de Liberação Diária</h3>
-                            <p className="text-xxs text-slate-400">Gerenciamento e conciliação de rotas importadas por data específica.</p>
+                            <p className="text-xxs text-slate-400">Gerenciamento e conciliação de rotas importadas em tempo real.</p>
                           </div>
                         </div>
 
@@ -6326,17 +6328,14 @@ export default function GestorDashboard({
                           <select
                             value={importDateFilter}
                             onChange={e => setImportDateFilter(e.target.value)}
-                            className="text-xs p-2 bg-white border border-slate-200 rounded font-sans focus:outline-none"
+                            className="text-xs p-2 bg-white border border-slate-200 rounded font-sans focus:outline-none font-bold"
                           >
-                            {uniqueDates.length === 0 ? (
-                              <option value={new Date().toISOString().split('T')[0]}>Sem rotas importadas</option>
-                            ) : (
-                              uniqueDates.map(d => (
-                                <option key={d} value={d}>
-                                  {new Date(d + 'T00:00:00').toLocaleDateString('pt-BR')}
-                                </option>
-                              ))
-                            )}
+                            <option value="all">Todas as Datas ({importedRoutes.length} mapas)</option>
+                            {uniqueDates.map(d => (
+                              <option key={d} value={d}>
+                                {new Date(d + 'T00:00:00').toLocaleDateString('pt-BR')} ({importedRoutes.filter(r => r.routeDate === d).length} mapas)
+                              </option>
+                            ))}
                           </select>
                         </div>
                       </div>

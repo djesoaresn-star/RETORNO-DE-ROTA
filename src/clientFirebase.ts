@@ -239,7 +239,26 @@ export function subscribeToFirestore(onUpdate: (db: any) => void): () => void {
               if (!isChunkIncomplete) {
                 combinedDb[key] = chunks.flat();
               } else {
-                console.warn(`[ClientFirebase] Chunks para '${key}' incompletos no snapshot, mantendo estado atual.`);
+                console.warn(`[ClientFirebase] Chunks para '${key}' incompletos no snapshot, buscando partes ausentes via getDoc...`);
+                // Asynchronously recover missing chunks so we don't drop real-time route updates
+                (async () => {
+                  try {
+                    const recoveredChunks: any[] = [];
+                    for (let i = 0; i < chunkCount; i++) {
+                      const cDoc = docMap[`${key}_chunk_${i}`];
+                      if (cDoc) {
+                        recoveredChunks[i] = cDoc.data || [];
+                      } else {
+                        const snap = await getDoc(doc(db, "app_state", `${key}_chunk_${i}`));
+                        recoveredChunks[i] = snap.exists() ? (snap.data().data || []) : [];
+                      }
+                    }
+                    const recovered = recoveredChunks.flat();
+                    onUpdate({ [key]: recovered });
+                  } catch (e) {
+                    console.warn(`[ClientFirebase] Falha ao recuperar chunks ausentes para '${key}':`, e);
+                  }
+                })();
               }
             } else if (docData.data !== undefined) {
               combinedDb[key] = docData.data;

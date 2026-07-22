@@ -12,6 +12,7 @@ import {
   fetchDirectlyFromFirestore,
   getLastSuccessfulSyncTime
 } from '../clientFirebase';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 interface HeaderProps {
   currentUser: User;
@@ -1293,11 +1294,11 @@ export default function Header({
               <div className="grid grid-cols-2 gap-2 font-mono text-[11px] bg-slate-50 p-3 rounded-xl border border-slate-200">
                 <div>
                   <span className="block text-[9px] font-sans uppercase tracking-wider text-slate-400 font-bold">Projeto Firebase</span>
-                  <span className="font-semibold text-slate-700 truncate block">scenic-year-l5xj8</span>
+                  <span className="font-semibold text-slate-700 truncate block">{firebaseConfig.projectId || 'sstr-7dd45'}</span>
                 </div>
                 <div>
                   <span className="block text-[9px] font-sans uppercase tracking-wider text-slate-400 font-bold">Banco Firestore ID</span>
-                  <span className="font-semibold text-slate-700 truncate block">d6b6b17f-3b26-4b81...</span>
+                  <span className="font-semibold text-slate-700 truncate block">{firebaseConfig.firestoreDatabaseId || '(default)'}</span>
                 </div>
                 <div>
                   <span className="block text-[9px] font-sans uppercase tracking-wider text-slate-400 font-bold">Canal de Escuta</span>

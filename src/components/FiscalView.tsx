@@ -1068,6 +1068,7 @@ export default function FiscalView({
           continue;
         }
 
+        const nowISO = new Date().toISOString();
         parsedRoutes.push({
           id: `imp_${Date.now()}_csv_${i}_${Math.floor(Math.random() * 1000)}`,
           routeMap: mapCode,
@@ -1075,7 +1076,8 @@ export default function FiscalView({
           driverId: matchedDriverId,
           routeDate: routeImportDate,
           status: 'pendente' as const,
-          importedAt: new Date().toISOString(),
+          importedAt: nowISO,
+          updatedAt: nowISO,
           itemsCount: 0,
           items: []
         });
@@ -1086,6 +1088,7 @@ export default function FiscalView({
         return;
       }
 
+      const nowISO = new Date().toISOString();
       let mergedRoutes = [...importedRoutes];
       if (isMerge) {
         // Merge mode
@@ -1099,7 +1102,8 @@ export default function FiscalView({
               plate: newR.plate || currentRoute.plate,
               driverId: newR.driverId || currentRoute.driverId,
               itemsCount: isPendente ? 0 : currentRoute.itemsCount,
-              items: isPendente ? [] : currentRoute.items
+              items: isPendente ? [] : currentRoute.items,
+              updatedAt: nowISO
             };
           } else {
             mergedRoutes.push(newR);
@@ -1117,7 +1121,8 @@ export default function FiscalView({
               plate: newR.plate || currentRoute.plate,
               driverId: newR.driverId || currentRoute.driverId,
               itemsCount: isPendente ? 0 : currentRoute.itemsCount,
-              items: isPendente ? [] : currentRoute.items
+              items: isPendente ? [] : currentRoute.items,
+              updatedAt: nowISO
             };
           } else {
             mergedRoutes.push(newR);
@@ -1179,6 +1184,7 @@ export default function FiscalView({
       unit: 'UN' as const
     }));
 
+    const nowISO = new Date().toISOString();
     const newRoute: ImportedRoute = {
       id: `imp_manual_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
       routeMap: mapClean,
@@ -1186,7 +1192,8 @@ export default function FiscalView({
       driverId: manualDriverId || '',
       routeDate: manualDate,
       status: 'pendente' as const,
-      importedAt: new Date().toISOString(),
+      importedAt: nowISO,
+      updatedAt: nowISO,
       itemsCount: initialRouteItems.length,
       items: initialRouteItems
     };

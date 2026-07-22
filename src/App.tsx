@@ -303,9 +303,12 @@ export default function App() {
 
   const cleanImportedRoutes = (list: ImportedRoute[]): ImportedRoute[] => {
     if (!list) return [];
+    const now = new Date().toISOString();
     return list.filter(Boolean).map(r => ({
       ...r,
-      routeMap: normalizeMapCode(r.routeMap)
+      routeMap: normalizeMapCode(r.routeMap),
+      importedAt: r.importedAt || now,
+      updatedAt: r.updatedAt || r.importedAt || now
     }));
   };
 
@@ -568,38 +571,41 @@ export default function App() {
       } else {
         const routeMap = new Map<string, ImportedRoute>();
 
-        // 1. Base: local routes (guarantees routes created locally and not yet synced are never dropped)
+        // 1. Primary: load all canonical remote routes from database
+        remoteCleaned.forEach(remoteR => {
+          if (!remoteR || !remoteR.routeMap) return;
+          const mapKey = normalizeMapCode(remoteR.routeMap).toUpperCase();
+          const fullKey = `${mapKey}_${remoteR.routeDate || ''}`;
+          if (mapKey) {
+            routeMap.set(fullKey, remoteR);
+          }
+        });
+
+        // 2. Secondary: preserve local route edits or newly created unsynced local routes
         const localRoutes = AppStore.getImportedRoutes() || [];
         localRoutes.forEach(localR => {
           if (!localR || !localR.routeMap) return;
           const mapKey = normalizeMapCode(localR.routeMap).toUpperCase();
           const fullKey = `${mapKey}_${localR.routeDate || ''}`;
-          if (mapKey) routeMap.set(fullKey, localR);
-        });
-
-        // 2. Remote updates overwrite local if key exists and remote is newer/higher rank
-        remoteCleaned.forEach(remoteR => {
-          if (!remoteR || !remoteR.routeMap) return;
-          const mapKey = normalizeMapCode(remoteR.routeMap).toUpperCase();
-          const fullKey = `${mapKey}_${remoteR.routeDate || ''}`;
           if (!mapKey) return;
 
-          const localR = routeMap.get(fullKey) || routeMap.get(mapKey);
-          if (!localR) {
-            routeMap.set(fullKey, remoteR); // New route from another device
-            return;
-          }
+          const remoteR = routeMap.get(fullKey) || routeMap.get(mapKey);
+          if (!remoteR) {
+            // Keep locally created route if created recently
+            routeMap.set(fullKey, localR);
+          } else {
+            // Merge status/items if local user has progressed the route status
+            const localRank = getRouteStatusRank(localR.status);
+            const remoteRank = getRouteStatusRank(remoteR.status);
 
-          const localRank = getRouteStatusRank(localR.status);
-          const remoteRank = getRouteStatusRank(remoteR.status);
-
-          if (remoteRank > localRank) {
-            routeMap.set(fullKey, remoteR);
-          } else if (remoteRank === localRank) {
-            const remoteTime = remoteR.updatedAt ? new Date(remoteR.updatedAt).getTime() : (remoteR.importedAt ? new Date(remoteR.importedAt).getTime() : 0);
-            const localTime = localR.updatedAt ? new Date(localR.updatedAt).getTime() : (localR.importedAt ? new Date(localR.importedAt).getTime() : 0);
-            if (remoteTime >= localTime) {
-              routeMap.set(fullKey, remoteR);
+            if (localRank > remoteRank) {
+              routeMap.set(fullKey, localR);
+            } else if (localRank === remoteRank) {
+              const localTime = localR.updatedAt ? new Date(localR.updatedAt).getTime() : 0;
+              const remoteTime = remoteR.updatedAt ? new Date(remoteR.updatedAt).getTime() : 0;
+              if (localTime > remoteTime) {
+                routeMap.set(fullKey, localR);
+              }
             }
           }
         });
