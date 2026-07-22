@@ -455,68 +455,83 @@ export default function App() {
     // Smart Merge Audits
     if (db.audits !== undefined) {
       const remoteCleaned = cleanAudits(db.audits);
-      const auditMap = new Map<string, AuditSession>();
+      if (remoteCleaned.length === 0) {
+        setAudits([]);
+        AppStore.setAudits([]);
+      } else {
+        const auditMap = new Map<string, AuditSession>();
 
-      // 1. Base: local audits (guarantees local sessions not yet in remote are preserved)
-      const localAudits = AppStore.getAudits() || [];
-      localAudits.forEach(localA => {
-        if (localA && localA.id) auditMap.set(localA.id, localA);
-      });
+        // 1. Base: local audits (guarantees local sessions not yet in remote are preserved)
+        const localAudits = AppStore.getAudits() || [];
+        localAudits.forEach(localA => {
+          if (localA && localA.id) auditMap.set(localA.id, localA);
+        });
 
-      // 2. Remote updates overwrite local when remote is newer or higher rank
-      remoteCleaned.forEach(remoteA => {
-        if (!remoteA || !remoteA.id) return;
-        const localA = auditMap.get(remoteA.id);
-        if (!localA) {
-          auditMap.set(remoteA.id, remoteA); // new session from another device
-          return;
-        }
-
-        const localRank = getAuditStatusRank(localA.status);
-        const remoteRank = getAuditStatusRank(remoteA.status);
-
-        if (remoteRank > localRank) {
-          auditMap.set(remoteA.id, remoteA);
-        } else if (remoteRank === localRank) {
-          const remoteTime = remoteA.updatedAt ? new Date(remoteA.updatedAt).getTime() : 0;
-          const localTime = localA.updatedAt ? new Date(localA.updatedAt).getTime() : 0;
-          if (remoteTime > localTime) {
-            auditMap.set(remoteA.id, remoteA);
+        // 2. Remote updates overwrite local when remote is newer or higher rank
+        remoteCleaned.forEach(remoteA => {
+          if (!remoteA || !remoteA.id) return;
+          const localA = auditMap.get(remoteA.id);
+          if (!localA) {
+            auditMap.set(remoteA.id, remoteA); // new session from another device
+            return;
           }
-        }
-      });
 
-      const mergedAudits = Array.from(auditMap.values());
-      setAudits(mergedAudits);
-      AppStore.setAudits(mergedAudits);
+          const localRank = getAuditStatusRank(localA.status);
+          const remoteRank = getAuditStatusRank(remoteA.status);
+
+          if (remoteRank > localRank) {
+            auditMap.set(remoteA.id, remoteA);
+          } else if (remoteRank === localRank) {
+            const remoteTime = remoteA.updatedAt ? new Date(remoteA.updatedAt).getTime() : 0;
+            const localTime = localA.updatedAt ? new Date(localA.updatedAt).getTime() : 0;
+            if (remoteTime > localTime) {
+              auditMap.set(remoteA.id, remoteA);
+            }
+          }
+        });
+
+        const mergedAudits = Array.from(auditMap.values());
+        setAudits(mergedAudits);
+        AppStore.setAudits(mergedAudits);
+      }
     }
 
     // Smart Merge Vales
     if (db.vales !== undefined) {
       const remoteCleaned = cleanVales(db.vales);
-      const localVales = AppStore.getVales() || [];
-      const valeMap = new Map<string, Vale>();
-      localVales.forEach(v => { if (v && v.id) valeMap.set(v.id, v); });
-      remoteCleaned.forEach(rv => {
-        if (rv && rv.id) valeMap.set(rv.id, rv);
-      });
-      const mergedVales = Array.from(valeMap.values());
-      setVales(mergedVales);
-      AppStore.setVales(mergedVales);
+      if (remoteCleaned.length === 0) {
+        setVales([]);
+        AppStore.setVales([]);
+      } else {
+        const localVales = AppStore.getVales() || [];
+        const valeMap = new Map<string, Vale>();
+        localVales.forEach(v => { if (v && v.id) valeMap.set(v.id, v); });
+        remoteCleaned.forEach(rv => {
+          if (rv && rv.id) valeMap.set(rv.id, rv);
+        });
+        const mergedVales = Array.from(valeMap.values());
+        setVales(mergedVales);
+        AppStore.setVales(mergedVales);
+      }
     }
 
     // Smart Merge Return Forecasts
     if (db.returnForecasts !== undefined) {
       const remoteCleaned = cleanReturnForecasts(db.returnForecasts);
-      const localForecasts = AppStore.getReturnForecasts() || [];
-      const forecastMap = new Map<string, ReturnForecast>();
-      localForecasts.forEach(f => { if (f && f.id) forecastMap.set(f.id, f); });
-      remoteCleaned.forEach(rf => {
-        if (rf && rf.id) forecastMap.set(rf.id, rf);
-      });
-      const mergedForecasts = Array.from(forecastMap.values());
-      setReturnForecasts(mergedForecasts);
-      AppStore.setReturnForecasts(mergedForecasts);
+      if (remoteCleaned.length === 0) {
+        setReturnForecasts([]);
+        AppStore.setReturnForecasts([]);
+      } else {
+        const localForecasts = AppStore.getReturnForecasts() || [];
+        const forecastMap = new Map<string, ReturnForecast>();
+        localForecasts.forEach(f => { if (f && f.id) forecastMap.set(f.id, f); });
+        remoteCleaned.forEach(rf => {
+          if (rf && rf.id) forecastMap.set(rf.id, rf);
+        });
+        const mergedForecasts = Array.from(forecastMap.values());
+        setReturnForecasts(mergedForecasts);
+        AppStore.setReturnForecasts(mergedForecasts);
+      }
     }
 
     if (db.fiscalAlerts !== undefined) {
@@ -527,47 +542,52 @@ export default function App() {
     // Smart Merge Imported Routes
     if (db.importedRoutes !== undefined) {
       const remoteCleaned = cleanImportedRoutes(db.importedRoutes);
-      const routeMap = new Map<string, ImportedRoute>();
+      if (remoteCleaned.length === 0) {
+        setImportedRoutes([]);
+        AppStore.setImportedRoutes([]);
+      } else {
+        const routeMap = new Map<string, ImportedRoute>();
 
-      // 1. Base: local routes (guarantees routes created locally and not yet synced are never dropped)
-      const localRoutes = AppStore.getImportedRoutes() || [];
-      localRoutes.forEach(localR => {
-        if (!localR || !localR.routeMap) return;
-        const mapKey = normalizeMapCode(localR.routeMap).toUpperCase();
-        const fullKey = `${mapKey}_${localR.routeDate || ''}`;
-        if (mapKey) routeMap.set(fullKey, localR);
-      });
+        // 1. Base: local routes (guarantees routes created locally and not yet synced are never dropped)
+        const localRoutes = AppStore.getImportedRoutes() || [];
+        localRoutes.forEach(localR => {
+          if (!localR || !localR.routeMap) return;
+          const mapKey = normalizeMapCode(localR.routeMap).toUpperCase();
+          const fullKey = `${mapKey}_${localR.routeDate || ''}`;
+          if (mapKey) routeMap.set(fullKey, localR);
+        });
 
-      // 2. Remote updates overwrite local if key exists and remote is newer/higher rank
-      remoteCleaned.forEach(remoteR => {
-        if (!remoteR || !remoteR.routeMap) return;
-        const mapKey = normalizeMapCode(remoteR.routeMap).toUpperCase();
-        const fullKey = `${mapKey}_${remoteR.routeDate || ''}`;
-        if (!mapKey) return;
+        // 2. Remote updates overwrite local if key exists and remote is newer/higher rank
+        remoteCleaned.forEach(remoteR => {
+          if (!remoteR || !remoteR.routeMap) return;
+          const mapKey = normalizeMapCode(remoteR.routeMap).toUpperCase();
+          const fullKey = `${mapKey}_${remoteR.routeDate || ''}`;
+          if (!mapKey) return;
 
-        const localR = routeMap.get(fullKey) || routeMap.get(mapKey);
-        if (!localR) {
-          routeMap.set(fullKey, remoteR); // New route from another device
-          return;
-        }
-
-        const localRank = getRouteStatusRank(localR.status);
-        const remoteRank = getRouteStatusRank(remoteR.status);
-
-        if (remoteRank > localRank) {
-          routeMap.set(fullKey, remoteR);
-        } else if (remoteRank === localRank) {
-          const remoteTime = remoteR.updatedAt ? new Date(remoteR.updatedAt).getTime() : (remoteR.importedAt ? new Date(remoteR.importedAt).getTime() : 0);
-          const localTime = localR.updatedAt ? new Date(localR.updatedAt).getTime() : (localR.importedAt ? new Date(localR.importedAt).getTime() : 0);
-          if (remoteTime >= localTime) {
-            routeMap.set(fullKey, remoteR);
+          const localR = routeMap.get(fullKey) || routeMap.get(mapKey);
+          if (!localR) {
+            routeMap.set(fullKey, remoteR); // New route from another device
+            return;
           }
-        }
-      });
 
-      const mergedRoutes = Array.from(routeMap.values());
-      setImportedRoutes(mergedRoutes);
-      AppStore.setImportedRoutes(mergedRoutes);
+          const localRank = getRouteStatusRank(localR.status);
+          const remoteRank = getRouteStatusRank(remoteR.status);
+
+          if (remoteRank > localRank) {
+            routeMap.set(fullKey, remoteR);
+          } else if (remoteRank === localRank) {
+            const remoteTime = remoteR.updatedAt ? new Date(remoteR.updatedAt).getTime() : (remoteR.importedAt ? new Date(remoteR.importedAt).getTime() : 0);
+            const localTime = localR.updatedAt ? new Date(localR.updatedAt).getTime() : (localR.importedAt ? new Date(localR.importedAt).getTime() : 0);
+            if (remoteTime >= localTime) {
+              routeMap.set(fullKey, remoteR);
+            }
+          }
+        });
+
+        const mergedRoutes = Array.from(routeMap.values());
+        setImportedRoutes(mergedRoutes);
+        AppStore.setImportedRoutes(mergedRoutes);
+      }
     }
 
     if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
