@@ -336,29 +336,28 @@ export default function App() {
     // Smart Merge Audits
     if (db.audits !== undefined) {
       const remoteCleaned = cleanAudits(db.audits);
-      const localAudits = AppStore.getAudits() || [];
       const auditMap = new Map<string, AuditSession>();
 
-      // Populate local audits first
-      localAudits.forEach(a => { if (a && a.id) auditMap.set(a.id, a); });
-
-      // Merge remote audits
+      // 1. Set remote Firestore audits as primary ground truth
       remoteCleaned.forEach(remoteA => {
-        if (!remoteA || !remoteA.id) return;
-        const localA = auditMap.get(remoteA.id);
-        if (!localA) {
-          auditMap.set(remoteA.id, remoteA);
-        } else {
+        if (remoteA && remoteA.id) auditMap.set(remoteA.id, remoteA);
+      });
+
+      // 2. Merge local pending edits if higher status rank or newer
+      const localAudits = AppStore.getAudits() || [];
+      localAudits.forEach(localA => {
+        if (!localA || !localA.id) return;
+        const remoteA = auditMap.get(localA.id);
+        if (remoteA) {
           const localRank = getAuditStatusRank(localA.status);
           const remoteRank = getAuditStatusRank(remoteA.status);
-
-          if (remoteRank > localRank) {
-            auditMap.set(remoteA.id, remoteA);
-          } else if (remoteRank === localRank) {
+          if (localRank > remoteRank) {
+            auditMap.set(localA.id, localA);
+          } else if (localRank === remoteRank) {
             const remoteTime = remoteA.updatedAt ? new Date(remoteA.updatedAt).getTime() : 0;
             const localTime = localA.updatedAt ? new Date(localA.updatedAt).getTime() : 0;
-            if (remoteTime > localTime) {
-              auditMap.set(remoteA.id, remoteA);
+            if (localTime > remoteTime) {
+              auditMap.set(localA.id, localA);
             }
           }
         }
@@ -405,41 +404,28 @@ export default function App() {
     // Smart Merge Imported Routes
     if (db.importedRoutes !== undefined) {
       const remoteCleaned = cleanImportedRoutes(db.importedRoutes);
-      const localRoutes = AppStore.getImportedRoutes() || [];
       const routeMap = new Map<string, ImportedRoute>();
 
-      // Populate local routes indexed strictly by normalized map code
-      localRoutes.forEach(r => {
-        if (!r || !r.routeMap) return;
-        const key = normalizeMapCode(r.routeMap).toUpperCase();
-        if (!key) return;
-        const existing = routeMap.get(key);
-        if (!existing || getRouteStatusRank(r.status) > getRouteStatusRank(existing.status)) {
-          routeMap.set(key, r);
-        }
-      });
-
-      // Merge remote routes
+      // 1. Set remote Firestore routes as authoritative ground truth
       remoteCleaned.forEach(remoteR => {
         if (!remoteR || !remoteR.routeMap) return;
         const key = normalizeMapCode(remoteR.routeMap).toUpperCase();
         if (!key) return;
-        const localR = routeMap.get(key);
-        if (!localR) {
-          routeMap.set(key, remoteR);
-        } else {
+        routeMap.set(key, remoteR);
+      });
+
+      // 2. Allow local routes if higher status rank
+      const localRoutes = AppStore.getImportedRoutes() || [];
+      localRoutes.forEach(localR => {
+        if (!localR || !localR.routeMap) return;
+        const key = normalizeMapCode(localR.routeMap).toUpperCase();
+        if (!key) return;
+        const remoteR = routeMap.get(key);
+        if (remoteR) {
           const localRank = getRouteStatusRank(localR.status);
           const remoteRank = getRouteStatusRank(remoteR.status);
-
-          // Never downgrade status rank (e.g. 'fechado' back to 'pendente' or 'conferindo')
-          if (remoteRank > localRank) {
-            routeMap.set(key, remoteR);
-          } else if (remoteRank === localRank) {
-            const localItemsCount = localR.itemsCount || localR.items?.length || 0;
-            const remoteItemsCount = remoteR.itemsCount || remoteR.items?.length || 0;
-            if (remoteItemsCount > localItemsCount) {
-              routeMap.set(key, remoteR);
-            }
+          if (localRank > remoteRank) {
+            routeMap.set(key, localR);
           }
         }
       });
@@ -543,16 +529,18 @@ export default function App() {
 
     fetchLatestServerData();
 
-    // 3. Setup periodic backup polling every 20 seconds
+    // 3. Setup periodic backup polling & heartbeat every 15 seconds to guarantee multi-device connection
     const interval = setInterval(async () => {
       try {
         // Skip polling if there was a recent write on this client to avoid race conditions
-        if (Date.now() - lastWriteTime.current < 4000) {
+        if (Date.now() - lastWriteTime.current < 3000) {
           return;
         }
         if (isClientFirebaseActive()) {
-          // Native onSnapshot handles real-time updates directly.
-          // Skipping polling avoids redundant reads and prevents hitting Firestore rate limit.
+          const directDb = await fetchDirectlyFromFirestore();
+          if (directDb) {
+            applyDirectDb(directDb);
+          }
           return;
         }
         const res = await fetch('/api/db');
@@ -569,9 +557,26 @@ export default function App() {
       } catch (err) {
         console.warn('Polling database sync warning:', err);
       }
-    }, 20000);
+    }, 15000);
 
-    return () => clearInterval(interval);
+    // 4. Immediate re-sync when tab regains focus or comes back online (mobile/desktop device wake)
+    const handleReSyncOnWake = async () => {
+      if (document.visibilityState === 'visible' || navigator.onLine) {
+        console.log("[AppSync] Dispositivo re-ativado ou online. Re-sincronizando dados em tempo real...");
+        fetchLatestServerData();
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleReSyncOnWake);
+    window.addEventListener('focus', handleReSyncOnWake);
+    window.addEventListener('online', handleReSyncOnWake);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('visibilitychange', handleReSyncOnWake);
+      window.removeEventListener('focus', handleReSyncOnWake);
+      window.removeEventListener('online', handleReSyncOnWake);
+    };
   }, []);
 
   // 4. Setup real-time database updates via Server-Sent Events (SSE) or Firestore Live Sync

@@ -25,6 +25,10 @@ let lastAuthAttemptTime = 0;
 const AUTH_COOLDOWN_MS = 25000; // 25 seconds cooldown to prevent auth/too-many-requests loop
 let lastSuccessfulSyncTime = 0;
 
+export function getLastSuccessfulSyncTime(): number {
+  return lastSuccessfulSyncTime;
+}
+
 let isFirestoreQuotaExceeded = false;
 
 // Check localStorage on load for quota timestamp
@@ -206,6 +210,11 @@ export function subscribeToFirestore(onUpdate: (db: any) => void): () => void {
     const collRef = collection(db, "app_state");
     const unsubscribe = onSnapshot(collRef, (snapshot) => {
       try {
+        lastSuccessfulSyncTime = Date.now();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('firestore_synced', { detail: { time: lastSuccessfulSyncTime } }));
+        }
+
         const docMap: Record<string, any> = {};
         snapshot.forEach((doc) => {
           docMap[doc.id] = doc.data();
@@ -376,6 +385,10 @@ export async function fetchDirectlyFromFirestore(): Promise<any> {
     });
 
     await Promise.all(promises);
+    lastSuccessfulSyncTime = Date.now();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('firestore_synced', { detail: { time: lastSuccessfulSyncTime } }));
+    }
     return combinedDb;
   } catch (e) {
     console.error("[ClientFirebase] Falha crítica ao ler do Firestore diretamente:", e);

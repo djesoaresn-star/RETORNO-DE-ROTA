@@ -22,6 +22,7 @@ service cloud.firestore {
              docId == "photos" ||
              docId == "audit_logs" ||
              docId == "gemini_config" ||
+             docId == "customManual" ||
              docId.matches("^[a-zA-Z0-9_]+_chunk_\\d+$");
     }
 
