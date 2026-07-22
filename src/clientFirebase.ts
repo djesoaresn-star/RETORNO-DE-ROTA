@@ -310,7 +310,8 @@ export function getClientFirestore() {
     }
 
     const app = getApps().length === 0 ? initializeApp(config) : getApp();
-    firestoreInstance = getFirestore(app, config.firestoreDatabaseId || undefined);
+    const dbId = (config.firestoreDatabaseId && config.firestoreDatabaseId !== "(default)") ? config.firestoreDatabaseId : undefined;
+    firestoreInstance = dbId ? getFirestore(app, dbId) : getFirestore(app);
     console.log("[ClientFirebase] Conexão direta com Firestore inicializada com sucesso!");
     
     // Trigger anonymous authentication immediately upon initialization
@@ -409,10 +410,12 @@ export async function saveDirectlyToFirestore(payload: any): Promise<boolean> {
       if (!DB_KEYS.includes(key)) return;
 
       const docRef = doc(db, "app_state", key);
-      const array = payload[key] || [];
+      const rawData = payload[key];
+      // Sanitize data to convert any undefined properties to omitted keys/nulls
+      const cleanData = rawData !== undefined ? JSON.parse(JSON.stringify(rawData)) : [];
 
-      if (Array.isArray(array)) {
-        const chunks = chunkArray(array, 500);
+      if (Array.isArray(cleanData)) {
+        const chunks = chunkArray(cleanData, 500);
 
         // Get old chunk count to delete orphaned chunks
         let oldChunkCount = 0;
@@ -445,10 +448,10 @@ export async function saveDirectlyToFirestore(payload: any): Promise<boolean> {
         }
 
         await batch.commit();
-      } else if (typeof array === 'object' && array !== null) {
-        await setDoc(docRef, array);
+      } else if (typeof cleanData === 'object' && cleanData !== null) {
+        await setDoc(docRef, cleanData);
       } else {
-        await setDoc(docRef, { data: array });
+        await setDoc(docRef, { data: cleanData });
       }
     });
 

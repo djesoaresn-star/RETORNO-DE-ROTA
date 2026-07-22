@@ -222,11 +222,10 @@ export default function App() {
 
         if (isClientFirebaseActive()) {
           try {
-            success = await saveDirectlyToFirestore(payload);
-            if (!success) {
-              console.warn('[ClientFirebase] Falha ao sincronizar diretamente. Tentando persistir via servidor local...');
-              success = await saveToServer(payload);
-            }
+            const firestorePromise = saveDirectlyToFirestore(payload);
+            const serverPromise = saveToServer(payload);
+            const [fsSuccess, srvSuccess] = await Promise.all([firestorePromise, serverPromise]);
+            success = fsSuccess || srvSuccess;
           } catch (err) {
             console.error('[ClientFirebase] Erro ao sincronizar diretamente com o Firestore, tentando fallback via servidor:', err);
             success = await saveToServer(payload);
@@ -334,23 +333,124 @@ export default function App() {
   const applyDirectDb = (db: any) => {
     if (!db) return;
 
+    // Protection: If a local write was performed in the last 15 seconds, defer remote override to protect local user inputs/imports
+    if (Date.now() - lastWriteTime.current < 15000) {
+      console.log("[AppSync] Ignorando atualização remota temporariamente para proteger escrita local recente.");
+      return;
+    }
+
     if (db.users && db.users.length > 0) {
-      setUsers(db.users);
-      AppStore.setUsers(db.users);
+      const userMap = new Map<string, User>();
+      const localUsers = AppStore.getUsers() || [];
+      localUsers.forEach(u => { if (u && u.id) userMap.set(u.id, u); });
+      db.users.forEach((u: User) => { if (u && u.id) userMap.set(u.id, { ...userMap.get(u.id), ...u }); });
+      const mergedUsers = Array.from(userMap.values());
+      setUsers(mergedUsers);
+      AppStore.setUsers(mergedUsers);
+
       const savedUserId = localStorage.getItem('logiroute_authenticated_user_id');
       if (savedUserId) {
-        const matchedUser = db.users.find((u: User) => u.id === savedUserId);
+        const matchedUser = mergedUsers.find((u: User) => u.id === savedUserId);
         if (matchedUser) setCurrentUser(matchedUser);
       }
     }
-    if (db.drivers) { setDrivers(db.drivers); AppStore.setDrivers(db.drivers); }
-    if (db.vehicles) { setVehicles(db.vehicles); AppStore.setVehicles(db.vehicles); }
-    if (db.products) {
-      const repaired = repairProductsList(db.products);
-      setProducts(repaired);
-      AppStore.setProducts(repaired);
+
+    // Cumulative Smart Merge Drivers
+    if (db.drivers !== undefined && Array.isArray(db.drivers)) {
+      const driverMap = new Map<string, Driver>();
+      const localDrivers = AppStore.getDrivers() || [];
+      localDrivers.forEach(d => {
+        if (d && (d.id || d.name)) {
+          const key = (d.id || d.name).toString().trim().toLowerCase();
+          driverMap.set(key, d);
+        }
+      });
+      db.drivers.forEach((d: Driver) => {
+        if (d && (d.id || d.name)) {
+          const key = (d.id || d.name).toString().trim().toLowerCase();
+          const existing = driverMap.get(key);
+          driverMap.set(key, existing ? { ...existing, ...d } : d);
+        }
+      });
+      const mergedDrivers = Array.from(driverMap.values());
+      setDrivers(mergedDrivers);
+      AppStore.setDrivers(mergedDrivers);
     }
-    if (db.activeAssets) { setActiveAssets(db.activeAssets); AppStore.setActiveAssets(db.activeAssets); }
+
+    // Cumulative Smart Merge Vehicles
+    if (db.vehicles !== undefined && Array.isArray(db.vehicles)) {
+      const vehicleMap = new Map<string, Vehicle>();
+      const localVehicles = AppStore.getVehicles() || [];
+      localVehicles.forEach(v => {
+        if (v && v.plate) {
+          const key = v.plate.toString().trim().toUpperCase();
+          vehicleMap.set(key, v);
+        }
+      });
+      db.vehicles.forEach((v: Vehicle) => {
+        if (v && v.plate) {
+          const key = v.plate.toString().trim().toUpperCase();
+          const existing = vehicleMap.get(key);
+          vehicleMap.set(key, existing ? { ...existing, ...v } : v);
+        }
+      });
+      const mergedVehicles = Array.from(vehicleMap.values());
+      setVehicles(mergedVehicles);
+      AppStore.setVehicles(mergedVehicles);
+    }
+
+    // Cumulative Smart Merge Products
+    if (db.products !== undefined && Array.isArray(db.products)) {
+      const repairedRemote = repairProductsList(db.products);
+      const productMap = new Map<string, Product>();
+      
+      const localProds = repairProductsList(AppStore.getProducts() || []);
+      localProds.forEach(p => {
+        if (p && p.code) productMap.set(p.code.toString().trim(), p);
+      });
+
+      repairedRemote.forEach(p => {
+        if (p && p.code) {
+          const key = p.code.toString().trim();
+          const localP = productMap.get(key);
+          if (!localP) {
+            productMap.set(key, p);
+          } else {
+            productMap.set(key, {
+              ...localP,
+              ...p,
+              description: (p.description && p.description !== p.code) ? p.description : localP.description
+            });
+          }
+        }
+      });
+
+      const mergedProducts = Array.from(productMap.values());
+      setProducts(mergedProducts);
+      AppStore.setProducts(mergedProducts);
+    }
+
+    // Cumulative Smart Merge Active Assets
+    if (db.activeAssets !== undefined && Array.isArray(db.activeAssets)) {
+      const assetMap = new Map<string, ActiveAsset>();
+      const localAssets = AppStore.getActiveAssets() || [];
+      localAssets.forEach(a => {
+        if (a && a.id) {
+          const key = a.id.toString().trim().toLowerCase();
+          assetMap.set(key, a);
+        }
+      });
+      db.activeAssets.forEach((a: ActiveAsset) => {
+        if (a && a.id) {
+          const key = a.id.toString().trim().toLowerCase();
+          const existing = assetMap.get(key);
+          assetMap.set(key, existing ? { ...existing, ...a } : a);
+        }
+      });
+      const mergedAssets = Array.from(assetMap.values());
+      setActiveAssets(mergedAssets);
+      AppStore.setActiveAssets(mergedAssets);
+    }
 
     // Smart Merge Audits
     if (db.audits !== undefined) {
@@ -433,19 +533,21 @@ export default function App() {
       const localRoutes = AppStore.getImportedRoutes() || [];
       localRoutes.forEach(localR => {
         if (!localR || !localR.routeMap) return;
-        const key = normalizeMapCode(localR.routeMap).toUpperCase();
-        if (key) routeMap.set(key, localR);
+        const mapKey = normalizeMapCode(localR.routeMap).toUpperCase();
+        const fullKey = `${mapKey}_${localR.routeDate || ''}`;
+        if (mapKey) routeMap.set(fullKey, localR);
       });
 
       // 2. Remote updates overwrite local if key exists and remote is newer/higher rank
       remoteCleaned.forEach(remoteR => {
         if (!remoteR || !remoteR.routeMap) return;
-        const key = normalizeMapCode(remoteR.routeMap).toUpperCase();
-        if (!key) return;
+        const mapKey = normalizeMapCode(remoteR.routeMap).toUpperCase();
+        const fullKey = `${mapKey}_${remoteR.routeDate || ''}`;
+        if (!mapKey) return;
 
-        const localR = routeMap.get(key);
+        const localR = routeMap.get(fullKey) || routeMap.get(mapKey);
         if (!localR) {
-          routeMap.set(key, remoteR); // New route from another device
+          routeMap.set(fullKey, remoteR); // New route from another device
           return;
         }
 
@@ -453,12 +555,12 @@ export default function App() {
         const remoteRank = getRouteStatusRank(remoteR.status);
 
         if (remoteRank > localRank) {
-          routeMap.set(key, remoteR);
+          routeMap.set(fullKey, remoteR);
         } else if (remoteRank === localRank) {
           const remoteTime = remoteR.updatedAt ? new Date(remoteR.updatedAt).getTime() : (remoteR.importedAt ? new Date(remoteR.importedAt).getTime() : 0);
           const localTime = localR.updatedAt ? new Date(localR.updatedAt).getTime() : (localR.importedAt ? new Date(localR.importedAt).getTime() : 0);
-          if (remoteTime > localTime) {
-            routeMap.set(key, remoteR);
+          if (remoteTime >= localTime) {
+            routeMap.set(fullKey, remoteR);
           }
         }
       });

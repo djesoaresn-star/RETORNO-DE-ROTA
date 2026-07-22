@@ -142,12 +142,12 @@ function checkQuotaExceeded(error: any) {
 }
 
 const DEFAULT_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyCZ2yYeYPVA_TVIEwsvQNJ9tzq4f3kYyis",
-  authDomain: "armazemrelatorios.firebaseapp.com",
-  projectId: "armazemrelatorios",
-  storageBucket: "armazemrelatorios.firebasestorage.app",
-  messagingSenderId: "1060201893094",
-  appId: "1:1060201893094:web:5702ee694b6e234f0dbf27",
+  apiKey: "AIzaSyCFpHeTCT9pxryljNDps2IVEA3l89cTpLk",
+  authDomain: "sstr-7dd45.firebaseapp.com",
+  projectId: "sstr-7dd45",
+  storageBucket: "sstr-7dd45.firebasestorage.app",
+  messagingSenderId: "997661072530",
+  appId: "1:997661072530:web:338293e8fa584a934eda4b",
   measurementId: "",
   firestoreDatabaseId: ""
 };
@@ -207,9 +207,10 @@ async function initFirebase(forceReinit = false) {
     });
 
     // Use specified custom Firestore database ID if available
+    const dbId = (config.firestoreDatabaseId && config.firestoreDatabaseId !== "(default)") ? config.firestoreDatabaseId : undefined;
     const dbInstance = initializeFirestore(app, {
       experimentalForceLongPolling: true,
-    }, config.firestoreDatabaseId || undefined);
+    }, dbId);
     console.log("Firebase Firestore inicializado com sucesso.");
 
     try {

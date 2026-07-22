@@ -1,7 +1,81 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
+import { useState, useEffect, StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+
+function RootApp() {
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    const errorHandler = (event: ErrorEvent) => {
+      console.error("Global Error Caught:", event.error);
+      if (event.error) {
+        setError(event.error instanceof Error ? event.error : new Error(String(event.error)));
+      }
+    };
+    const rejectionHandler = (event: PromiseRejectionEvent) => {
+      console.warn("Unhandled Promise Rejection captured (non-fatal):", event.reason);
+      // Prevent browser default error output while keeping app running smoothly
+      try {
+        event.preventDefault();
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    window.addEventListener('error', errorHandler);
+    window.addEventListener('unhandledrejection', rejectionHandler);
+
+    return () => {
+      window.removeEventListener('error', errorHandler);
+      window.removeEventListener('unhandledrejection', rejectionHandler);
+    };
+  }, []);
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6 font-sans">
+        <div className="max-w-lg w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-8 space-y-6">
+          <div className="flex items-center gap-3 text-amber-500">
+            <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20">
+              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-white">Ops! Ocorreu um erro na aplicação</h2>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">Falha de execução capturada</p>
+            </div>
+          </div>
+
+          <div className="p-4 bg-slate-950/80 rounded-xl border border-slate-800/80 text-xs text-slate-300 font-mono overflow-auto max-h-40 leading-relaxed">
+            {error.message || "Erro desconhecido na execução."}
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={() => window.location.reload()}
+              className="flex-1 py-3 px-4 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg transition duration-150 text-center cursor-pointer"
+            >
+              Recarregar Aplicação
+            </button>
+            <button
+              onClick={() => {
+                try { localStorage.clear(); sessionStorage.clear(); } catch (e) { console.error(e); }
+                window.location.reload();
+              }}
+              className="py-3 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs rounded-xl border border-slate-700 transition duration-150 text-center cursor-pointer"
+            >
+              Limpar Cache Local e Reiniciar
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return <App />;
+}
 
 // Global custom window.alert override for sandboxed iframe compatibility and cohesive design
 if (typeof window !== 'undefined') {
@@ -77,7 +151,8 @@ Date.prototype.toLocaleDateString = function (this: Date, locales?: string | str
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <RootApp />
   </StrictMode>,
 );
+
 
