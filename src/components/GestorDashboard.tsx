@@ -6430,8 +6430,10 @@ export default function GestorDashboard({
                                             "Forçar Fechamento",
                                             `Deseja forçar a baixa e o fechamento do mapa ${route.routeMap}?`,
                                             () => {
+                                              const targetCode = (route.routeMap || '').trim().replace(/^0+/, '').toUpperCase();
                                               const updatedRoutes = importedRoutes.map(r => {
-                                                if (r.id === route.id) {
+                                                const rCode = (r.routeMap || '').trim().replace(/^0+/, '').toUpperCase();
+                                                if (r.id === route.id || (rCode && rCode === targetCode)) {
                                                   return { ...r, status: 'fechado' as const };
                                                 }
                                                 return r;

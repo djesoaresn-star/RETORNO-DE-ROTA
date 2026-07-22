@@ -1571,7 +1571,12 @@ async function startServer() {
       // Merge data
       if (updatedAuditSession) {
         const audits = dbCache.audits || [];
-        dbCache.audits = audits.map((a: any) => a.id === auditId ? updatedAuditSession : a);
+        const exists = audits.some((a: any) => a.id === auditId);
+        if (exists) {
+          dbCache.audits = audits.map((a: any) => a.id === auditId ? updatedAuditSession : a);
+        } else {
+          dbCache.audits = [updatedAuditSession, ...audits];
+        }
       }
 
       if (updatedImportedRoutes) {

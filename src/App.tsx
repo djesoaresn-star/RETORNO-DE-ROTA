@@ -226,7 +226,7 @@ export default function App() {
           // Throttle the intrusive sync warning to maximum once per 60 seconds to avoid spamming the user during flaky network
           if (Date.now() - lastSyncAlertTime.current > 60000) {
             lastSyncAlertTime.current = Date.now();
-            alert("Aviso: Falha ao sincronizar as alterações com o servidor. Verifique sua conexão com a internet. O aplicativo continuará tentando em segundo plano.");
+            console.warn("[AppSync] Falha ao sincronizar alterações com o servidor. Re-agendando no background...");
           }
         }
       }
@@ -286,6 +286,31 @@ export default function App() {
     }));
   };
 
+  const getRouteStatusRank = (status?: string): number => {
+    switch (status) {
+      case 'fechado': return 4;
+      case 'em_analise':
+      case 'reconferir': return 3;
+      case 'conferindo': return 2;
+      case 'pendente':
+      default: return 1;
+    }
+  };
+
+  const getAuditStatusRank = (status?: string): number => {
+    switch (status) {
+      case 'finalizado_ok':
+      case 'finalizado_divergente': return 4;
+      case 'recontagem_finalizada':
+      case 'sobra_alinhada':
+      case 'conferido_fisico': return 3;
+      case 'conferindo':
+      case 'recontagem_solicitada': return 2;
+      case 'pendente':
+      default: return 1;
+    }
+  };
+
   const applyDirectDb = (db: any) => {
     if (!db) return;
     lastWriteTime.current = Date.now();
@@ -307,30 +332,123 @@ export default function App() {
       AppStore.setProducts(repaired);
     }
     if (db.activeAssets) { setActiveAssets(db.activeAssets); AppStore.setActiveAssets(db.activeAssets); }
+
+    // Smart Merge Audits
     if (db.audits !== undefined) {
-      const cleaned = cleanAudits(db.audits);
-      setAudits(cleaned);
-      AppStore.setAudits(cleaned);
+      const remoteCleaned = cleanAudits(db.audits);
+      const localAudits = AppStore.getAudits() || [];
+      const auditMap = new Map<string, AuditSession>();
+
+      // Populate local audits first
+      localAudits.forEach(a => { if (a && a.id) auditMap.set(a.id, a); });
+
+      // Merge remote audits
+      remoteCleaned.forEach(remoteA => {
+        if (!remoteA || !remoteA.id) return;
+        const localA = auditMap.get(remoteA.id);
+        if (!localA) {
+          auditMap.set(remoteA.id, remoteA);
+        } else {
+          const localRank = getAuditStatusRank(localA.status);
+          const remoteRank = getAuditStatusRank(remoteA.status);
+
+          if (remoteRank > localRank) {
+            auditMap.set(remoteA.id, remoteA);
+          } else if (remoteRank === localRank) {
+            const remoteTime = remoteA.updatedAt ? new Date(remoteA.updatedAt).getTime() : 0;
+            const localTime = localA.updatedAt ? new Date(localA.updatedAt).getTime() : 0;
+            if (remoteTime > localTime) {
+              auditMap.set(remoteA.id, remoteA);
+            }
+          }
+        }
+      });
+
+      const mergedAudits = Array.from(auditMap.values());
+      setAudits(mergedAudits);
+      AppStore.setAudits(mergedAudits);
     }
+
+    // Smart Merge Vales
     if (db.vales !== undefined) {
-      const cleaned = cleanVales(db.vales);
-      setVales(cleaned);
-      AppStore.setVales(cleaned);
+      const remoteCleaned = cleanVales(db.vales);
+      const localVales = AppStore.getVales() || [];
+      const valeMap = new Map<string, Vale>();
+      localVales.forEach(v => { if (v && v.id) valeMap.set(v.id, v); });
+      remoteCleaned.forEach(rv => {
+        if (rv && rv.id) valeMap.set(rv.id, rv);
+      });
+      const mergedVales = Array.from(valeMap.values());
+      setVales(mergedVales);
+      AppStore.setVales(mergedVales);
     }
+
+    // Smart Merge Return Forecasts
     if (db.returnForecasts !== undefined) {
-      const cleaned = cleanReturnForecasts(db.returnForecasts);
-      setReturnForecasts(cleaned);
-      AppStore.setReturnForecasts(cleaned);
+      const remoteCleaned = cleanReturnForecasts(db.returnForecasts);
+      const localForecasts = AppStore.getReturnForecasts() || [];
+      const forecastMap = new Map<string, ReturnForecast>();
+      localForecasts.forEach(f => { if (f && f.id) forecastMap.set(f.id, f); });
+      remoteCleaned.forEach(rf => {
+        if (rf && rf.id) forecastMap.set(rf.id, rf);
+      });
+      const mergedForecasts = Array.from(forecastMap.values());
+      setReturnForecasts(mergedForecasts);
+      AppStore.setReturnForecasts(mergedForecasts);
     }
+
     if (db.fiscalAlerts !== undefined) {
       setFiscalAlerts(db.fiscalAlerts);
       AppStore.setFiscalAlerts(db.fiscalAlerts);
     }
+
+    // Smart Merge Imported Routes
     if (db.importedRoutes !== undefined) {
-      const cleaned = cleanImportedRoutes(db.importedRoutes);
-      setImportedRoutes(cleaned);
-      AppStore.setImportedRoutes(cleaned);
+      const remoteCleaned = cleanImportedRoutes(db.importedRoutes);
+      const localRoutes = AppStore.getImportedRoutes() || [];
+      const routeMap = new Map<string, ImportedRoute>();
+
+      // Populate local routes indexed strictly by normalized map code
+      localRoutes.forEach(r => {
+        if (!r || !r.routeMap) return;
+        const key = normalizeMapCode(r.routeMap).toUpperCase();
+        if (!key) return;
+        const existing = routeMap.get(key);
+        if (!existing || getRouteStatusRank(r.status) > getRouteStatusRank(existing.status)) {
+          routeMap.set(key, r);
+        }
+      });
+
+      // Merge remote routes
+      remoteCleaned.forEach(remoteR => {
+        if (!remoteR || !remoteR.routeMap) return;
+        const key = normalizeMapCode(remoteR.routeMap).toUpperCase();
+        if (!key) return;
+        const localR = routeMap.get(key);
+        if (!localR) {
+          routeMap.set(key, remoteR);
+        } else {
+          const localRank = getRouteStatusRank(localR.status);
+          const remoteRank = getRouteStatusRank(remoteR.status);
+
+          // Never downgrade status rank (e.g. 'fechado' back to 'pendente' or 'conferindo')
+          if (remoteRank > localRank) {
+            routeMap.set(key, remoteR);
+          } else if (remoteRank === localRank) {
+            const localItemsCount = localR.itemsCount || localR.items?.length || 0;
+            const remoteItemsCount = remoteR.itemsCount || remoteR.items?.length || 0;
+            if (remoteItemsCount > localItemsCount) {
+              routeMap.set(key, remoteR);
+            }
+          }
+        }
+      });
+
+      const mergedRoutes = Array.from(routeMap.values());
+      setImportedRoutes(mergedRoutes);
+      AppStore.setImportedRoutes(mergedRoutes);
     }
+
     if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
     if (db.customManual !== undefined) { setCustomManualHTML(db.customManual); AppStore.setCustomManual(db.customManual); }
   };
@@ -445,32 +563,7 @@ export default function App() {
           }
           const data = await res.json();
           if (data.success && data.db) {
-            const db = data.db;
-            if (db.users && db.users.length > 0) {
-              setUsers(db.users);
-              AppStore.setUsers(db.users);
-              const freshUserId = localStorage.getItem('logiroute_authenticated_user_id');
-              if (freshUserId) {
-                const freshUser = db.users.find((u: User) => u.id === freshUserId);
-                if (freshUser) {
-                  setCurrentUser(freshUser);
-                }
-              }
-            }
-            if (db.drivers) { setDrivers(db.drivers); AppStore.setDrivers(db.drivers); }
-            if (db.vehicles) { setVehicles(db.vehicles); AppStore.setVehicles(db.vehicles); }
-            if (db.products) {
-              const repaired = repairProductsList(db.products);
-              setProducts(repaired);
-              AppStore.setProducts(repaired);
-            }
-            if (db.activeAssets) { setActiveAssets(db.activeAssets); AppStore.setActiveAssets(db.activeAssets); }
-            if (db.audits) { const cleaned = cleanAudits(db.audits); setAudits(cleaned); AppStore.setAudits(cleaned); }
-            if (db.vales) { const cleaned = cleanVales(db.vales); setVales(cleaned); AppStore.setVales(cleaned); }
-            if (db.returnForecasts) { const cleaned = cleanReturnForecasts(db.returnForecasts); setReturnForecasts(cleaned); AppStore.setReturnForecasts(cleaned); }
-            if (db.fiscalAlerts) { setFiscalAlerts(db.fiscalAlerts); AppStore.setFiscalAlerts(db.fiscalAlerts); }
-            if (db.importedRoutes) { const cleaned = cleanImportedRoutes(db.importedRoutes); setImportedRoutes(cleaned); AppStore.setImportedRoutes(cleaned); }
-            if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
+            applyDirectDb(data.db);
           }
         }
       } catch (err) {
@@ -520,31 +613,7 @@ export default function App() {
               return;
             }
 
-            if (db.users && db.users.length > 0) {
-              setUsers(db.users);
-              AppStore.setUsers(db.users);
-              const freshUserId = localStorage.getItem('logiroute_authenticated_user_id');
-              if (freshUserId) {
-                const freshUser = db.users.find((u: User) => u.id === freshUserId);
-                if (freshUser) {
-                  setCurrentUser(freshUser);
-                }
-              }
-            }
-            if (db.drivers) { setDrivers(db.drivers); AppStore.setDrivers(db.drivers); }
-            if (db.vehicles) { setVehicles(db.vehicles); AppStore.setVehicles(db.vehicles); }
-            if (db.products) {
-              const repaired = repairProductsList(db.products);
-              setProducts(repaired);
-              AppStore.setProducts(repaired);
-            }
-            if (db.activeAssets) { setActiveAssets(db.activeAssets); AppStore.setActiveAssets(db.activeAssets); }
-            if (db.audits) { const cleaned = cleanAudits(db.audits); setAudits(cleaned); AppStore.setAudits(cleaned); }
-            if (db.vales) { const cleaned = cleanVales(db.vales); setVales(cleaned); AppStore.setVales(cleaned); }
-            if (db.returnForecasts) { const cleaned = cleanReturnForecasts(db.returnForecasts); setReturnForecasts(cleaned); AppStore.setReturnForecasts(cleaned); }
-            if (db.fiscalAlerts) { setFiscalAlerts(db.fiscalAlerts); AppStore.setFiscalAlerts(db.fiscalAlerts); }
-            if (db.importedRoutes) { const cleaned = cleanImportedRoutes(db.importedRoutes); setImportedRoutes(cleaned); AppStore.setImportedRoutes(cleaned); }
-            if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
+            applyDirectDb(db);
           }
         } catch (err) {
           console.error("Error parsing real-time database event:", err);

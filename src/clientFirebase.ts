@@ -160,8 +160,10 @@ function triggerAnonymousAuth() {
           );
         } else if (errCode.includes("too-many-requests")) {
           console.warn("[ClientFirebase] ⚠️ Muitas requisições de autenticação enviadas. Cooldown ativo...");
+        } else if (errCode.includes("network-request-failed")) {
+          console.warn("[ClientFirebase] ⚠️ Conexão de rede falhou durante autenticação do Firebase. Operando com dados locais/servidor.", errCode);
         } else {
-          console.error("[ClientFirebase] Falha na autenticação anônima do Firebase:", err);
+          console.warn("[ClientFirebase] Aviso na autenticação anônima do Firebase:", errCode);
         }
       });
   } catch (e) {
@@ -216,11 +218,20 @@ export function subscribeToFirestore(onUpdate: (db: any) => void): () => void {
             if (docData.chunkCount !== undefined) {
               const chunkCount = docData.chunkCount;
               const chunks: any[] = [];
+              let isChunkIncomplete = false;
               for (let i = 0; i < chunkCount; i++) {
                 const chunkDoc = docMap[`${key}_chunk_${i}`];
-                chunks[i] = chunkDoc ? (chunkDoc.data || []) : [];
+                if (!chunkDoc) {
+                  isChunkIncomplete = true;
+                  break;
+                }
+                chunks[i] = chunkDoc.data || [];
               }
-              combinedDb[key] = chunks.flat();
+              if (!isChunkIncomplete) {
+                combinedDb[key] = chunks.flat();
+              } else {
+                console.warn(`[ClientFirebase] Chunks para '${key}' incompletos no snapshot, mantendo estado atual.`);
+              }
             } else if (docData.data !== undefined) {
               combinedDb[key] = docData.data;
             } else {
@@ -331,6 +342,7 @@ export async function fetchDirectlyFromFirestore(): Promise<any> {
             const chunkCount = docData.chunkCount;
             const chunks: any[] = [];
             const chunkPromises = [];
+            let hasChunkError = false;
 
             for (let i = 0; i < chunkCount; i++) {
               const chunkDocRef = doc(db, "app_state", `${key}_chunk_${i}`);
@@ -338,17 +350,19 @@ export async function fetchDirectlyFromFirestore(): Promise<any> {
                 if (chunkSnap.exists()) {
                   chunks[i] = chunkSnap.data().data || [];
                 } else {
-                  chunks[i] = [];
+                  hasChunkError = true;
                 }
               }).catch((chunkErr) => {
                 console.warn(`[ClientFirebase] Erro ao carregar chunk ${i} de ${key}:`, chunkErr);
-                chunks[i] = [];
+                hasChunkError = true;
               });
               chunkPromises.push(chunkPromise);
             }
 
             await Promise.all(chunkPromises);
-            combinedDb[key] = chunks.flat();
+            if (!hasChunkError) {
+              combinedDb[key] = chunks.flat();
+            }
           } else if (docData && docData.data !== undefined) {
             combinedDb[key] = docData.data;
           } else {
