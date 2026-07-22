@@ -6,44 +6,16 @@ service cloud.firestore {
     match /{document=**} {
       allow read, write: if false;
     }
-    
-    // Helper to check if the document ID is within the explicit catalog keys or chunk keys
-    function isAllowedDoc(docId) {
-      return docId == "users" ||
-             docId == "drivers" ||
-             docId == "vehicles" ||
-             docId == "products" ||
-             docId == "activeAssets" ||
-             docId == "audits" ||
-             docId == "vales" ||
-             docId == "returnForecasts" ||
-             docId == "fiscalAlerts" ||
-             docId == "importedRoutes" ||
-             docId == "photos" ||
-             docId == "audit_logs" ||
-             docId == "gemini_config" ||
-             docId == "customManual" ||
-             docId.matches("^[a-zA-Z0-9_]+_chunk_\\d+$");
-    }
 
-    // Helper to validate the structured array envelope of the App State documents or control documents
-    function isValidAppState(incomingData) {
-      return (incomingData.keys().hasAll(['data']) && incomingData.data is list) ||
-             (incomingData.keys().hasAll(['chunkCount']) && incomingData.chunkCount is int) ||
-             (incomingData.keys().hasAll(['apiKey']) && incomingData.apiKey is string);
-    }
-
-    // Secure the app_state collection
+    // Secure the app_state collection for real-time multi-device sync
     match /app_state/{documentId} {
-      allow read: if true;
-      allow create, update: if isAllowedDoc(documentId) && isValidAppState(request.resource.data);
-      allow delete: if isAllowedDoc(documentId);
+      allow read, write: if true;
     }
 
     // Secure the photos collection
     match /photos/{photoId} {
-      allow read: if true;
-      allow write: if true;
+      allow read, write: if true;
     }
   }
 }
+

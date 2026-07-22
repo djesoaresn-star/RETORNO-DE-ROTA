@@ -313,7 +313,6 @@ export default function App() {
 
   const applyDirectDb = (db: any) => {
     if (!db) return;
-    lastWriteTime.current = Date.now();
 
     if (db.users && db.users.length > 0) {
       setUsers(db.users);

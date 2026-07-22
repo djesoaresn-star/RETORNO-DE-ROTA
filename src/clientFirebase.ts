@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { initializeFirestore, doc, getDoc, setDoc, deleteDoc, collection, onSnapshot, terminate, setLogLevel } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, onSnapshot, terminate, setLogLevel } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
 import firebaseConfig from "../firebase-applet-config.json";
 
@@ -310,7 +310,7 @@ export function getClientFirestore() {
     }
 
     const app = getApps().length === 0 ? initializeApp(config) : getApp();
-    firestoreInstance = initializeFirestore(app, {}, config.firestoreDatabaseId || undefined);
+    firestoreInstance = getFirestore(app, config.firestoreDatabaseId || undefined);
     console.log("[ClientFirebase] Conexão direta com Firestore inicializada com sucesso!");
     
     // Trigger anonymous authentication immediately upon initialization
@@ -444,8 +444,10 @@ export async function saveDirectlyToFirestore(payload: any): Promise<boolean> {
           }
           await Promise.all(deletePromises);
         }
-      } else {
+      } else if (typeof array === 'object' && array !== null) {
         await setDoc(docRef, array);
+      } else {
+        await setDoc(docRef, { data: array });
       }
     });
 
