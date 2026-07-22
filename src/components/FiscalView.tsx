@@ -272,7 +272,7 @@ interface FiscalViewProps {
   vales?: Vale[];
   onSaveVales?: (vales: Vale[]) => void;
   activeTab?: string;
-  onResetPlatformData?: () => void;
+  onResetPlatformData?: (skipConfirmation?: boolean) => void;
   returnForecasts?: ReturnForecast[];
   onSaveForecasts?: (forecasts: ReturnForecast[]) => void;
 }
@@ -7716,7 +7716,7 @@ export default function FiscalView({
                   }
                   
                   // Run actual reset
-                  onResetPlatformData();
+                  onResetPlatformData(true);
                   setShowResetModal(false);
                   
                   // Show custom toast alert or custom dialog, here we use our alert framework or state

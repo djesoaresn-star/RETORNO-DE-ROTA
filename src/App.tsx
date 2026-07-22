@@ -80,24 +80,26 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const handleResetPlatformData = async () => {
+  const handleResetPlatformData = async (skipConfirmation: boolean = false) => {
     if (!currentUser || currentUser.role !== 'gestor') {
       alert("Acesso Negado: Apenas usuários com perfil Gestor possuem permissão para redefinir a base de dados da plataforma.");
       return;
     }
 
-    const firstConfirm = window.confirm(
-      "⚠️ ATENÇÃO: ZERAR BASE DE DADOS DA PLATAFORMA ⚠️\n\n" +
-      "Esta ação irá apagar permanentemente todas as rotas importadas, conferências, previsões, alertas e vales de TODOS os dispositivos conectados ao mesmo Firestore.\n\n" +
-      "Deseja realmente prosseguir com o reset?"
-    );
-    if (!firstConfirm) return;
+    if (!skipConfirmation) {
+      const firstConfirm = window.confirm(
+        "⚠️ ATENÇÃO: ZERAR BASE DE DADOS DA PLATAFORMA ⚠️\n\n" +
+        "Esta ação irá apagar permanentemente todas as rotas importadas, conferências, previsões, alertas e vales de TODOS os dispositivos conectados ao mesmo Firestore.\n\n" +
+        "Deseja realmente prosseguir com o reset?"
+      );
+      if (!firstConfirm) return;
 
-    const secondConfirm = window.confirm(
-      "❗ CONFIRMAÇÃO FINAL DE SEGURANÇA ❗\n\n" +
-      "Confirma novamente a exclusão completa e irreversível dos dados da plataforma?"
-    );
-    if (!secondConfirm) return;
+      const secondConfirm = window.confirm(
+        "❗ CONFIRMAÇÃO FINAL DE SEGURANÇA ❗\n\n" +
+        "Confirma novamente a exclusão completa e irreversível dos dados da plataforma?"
+      );
+      if (!secondConfirm) return;
+    }
 
     // Clear major functional arrays in state
     setImportedRoutes([]);
@@ -112,6 +114,13 @@ export default function App() {
     AppStore.setReturnForecasts([]);
     AppStore.setFiscalAlerts([]);
     AppStore.setVales([]);
+
+    // Clear IndexedDB photos
+    try {
+      await ImageDB.clearAllPhotos();
+    } catch (e) {
+      console.warn("Error clearing photos during platform reset:", e);
+    }
 
     // Cancel pending throttled writes
     pendingUpdatesRef.current = {};
@@ -143,7 +152,18 @@ export default function App() {
       console.warn("Reset server push error:", e);
     }
 
-    alert("Base de dados da plataforma redefinida com sucesso.");
+    // Broadcast reset event across browser tabs
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        const channel = new BroadcastChannel('logiroute_sync');
+        channel.postMessage({ type: 'RESET_PLATFORM' });
+        channel.close();
+      } catch (e) {}
+    }
+
+    if (!skipConfirmation) {
+      alert("Base de dados da plataforma redefinida com sucesso.");
+    }
   };
 
   const handleSaveCustomManual = (html: string) => {
@@ -824,7 +844,7 @@ export default function App() {
 
     if (channel) {
       channel.onmessage = (event) => {
-        if (event.data && event.data.type === 'SYNC_KEY') {
+        if (event.data && (event.data.type === 'SYNC_KEY' || event.data.type === 'RESET_PLATFORM')) {
           reloadStoreState();
         }
       };

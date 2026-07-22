@@ -29,7 +29,7 @@ interface GestorDashboardProps {
   auditLogs?: any[];
   customManualHTML?: string;
   onSaveCustomManual?: (html: string) => void;
-  onResetPlatformData?: () => void;
+  onResetPlatformData?: (skipConfirmation?: boolean) => void | Promise<void>;
 }
 
 function AuditPhotoViewer({ auditId, onSelectPhoto }: { auditId: string; onSelectPhoto: (photo: PhotoRecord) => void }) {
@@ -642,18 +642,18 @@ export default function GestorDashboard({
     }
 
     try {
-      // Clear audits
-      onSaveAudits([]);
-      // Clear imported routes
-      onSaveImportedRoutes([]);
-      // Clear photos from IndexedDB
-      await ImageDB.clearAllPhotos();
+      if (onResetPlatformData) {
+        await onResetPlatformData(true);
+      } else {
+        onSaveAudits([]);
+        onSaveImportedRoutes([]);
+        await ImageDB.clearAllPhotos();
+      }
 
-      alert("Base de dados limpa com sucesso! Toda a memória local e transações foram resetadas.");
+      alert("Base de dados limpa com sucesso! Toda a memória local, Firestore e transações foram resetadas para todos os usuários.");
       setShowResetModal(false);
       setResetConfirmWord('');
       setResetPassword('');
-      window.location.reload();
     } catch (e) {
       alert("Erro ao realizar limpeza de dados: " + e);
     }
