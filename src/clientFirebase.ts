@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, onSnapshot, terminate, setLogLevel } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, onSnapshot, terminate, setLogLevel, writeBatch } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
 import firebaseConfig from "../firebase-applet-config.json";
 
@@ -425,25 +425,26 @@ export async function saveDirectlyToFirestore(payload: any): Promise<boolean> {
           // Ignore
         }
 
-        // Save new chunks
-        const chunkPromises = chunks.map(async (chunk, i) => {
+        // Use writeBatch for atomic update of chunks, control document, and cleanup
+        const batch = writeBatch(db);
+
+        chunks.forEach((chunk, i) => {
           const chunkDocRef = doc(db, "app_state", `${key}_chunk_${i}`);
-          await setDoc(chunkDocRef, { data: chunk });
+          batch.set(chunkDocRef, { data: chunk });
         });
-        await Promise.all(chunkPromises);
 
         // Save control document
-        await setDoc(docRef, { chunkCount: chunks.length });
+        batch.set(docRef, { chunkCount: chunks.length });
 
-        // Clean up old chunks
+        // Clean up old chunks atomically
         if (oldChunkCount > chunks.length) {
-          const deletePromises = [];
           for (let i = chunks.length; i < oldChunkCount; i++) {
             const obsoleteDocRef = doc(db, "app_state", `${key}_chunk_${i}`);
-            deletePromises.push(deleteDoc(obsoleteDocRef).catch(() => {}));
+            batch.delete(obsoleteDocRef);
           }
-          await Promise.all(deletePromises);
         }
+
+        await batch.commit();
       } else if (typeof array === 'object' && array !== null) {
         await setDoc(docRef, array);
       } else {

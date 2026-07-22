@@ -214,6 +214,7 @@ export interface ImportedRoute {
   items?: ImportedRouteItem[];
   routeObservations?: RouteObservation[];
   isBlitz?: boolean; // Flag indicando se este veículo foi selecionado para Blitz de Refugo do dia
+  updatedAt?: string;
 }
 
 export function isTreatableAssetId(assetId: string): boolean {

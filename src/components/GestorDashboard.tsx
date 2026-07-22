@@ -29,6 +29,7 @@ interface GestorDashboardProps {
   auditLogs?: any[];
   customManualHTML?: string;
   onSaveCustomManual?: (html: string) => void;
+  onResetPlatformData?: () => void;
 }
 
 function AuditPhotoViewer({ auditId, onSelectPhoto }: { auditId: string; onSelectPhoto: (photo: PhotoRecord) => void }) {
@@ -120,7 +121,8 @@ export default function GestorDashboard({
   forceTab,
   auditLogs = [],
   customManualHTML = '',
-  onSaveCustomManual
+  onSaveCustomManual,
+  onResetPlatformData
 }: GestorDashboardProps) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [selectedValeIdForUpload, setSelectedValeIdForUpload] = useState<string | null>(null);

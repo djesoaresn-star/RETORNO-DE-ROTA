@@ -81,6 +81,24 @@ export default function App() {
   });
 
   const handleResetPlatformData = async () => {
+    if (!currentUser || currentUser.role !== 'gestor') {
+      alert("Acesso Negado: Apenas usuários com perfil Gestor possuem permissão para redefinir a base de dados da plataforma.");
+      return;
+    }
+
+    const firstConfirm = window.confirm(
+      "⚠️ ATENÇÃO: ZERAR BASE DE DADOS DA PLATAFORMA ⚠️\n\n" +
+      "Esta ação irá apagar permanentemente todas as rotas importadas, conferências, previsões, alertas e vales de TODOS os dispositivos conectados ao mesmo Firestore.\n\n" +
+      "Deseja realmente prosseguir com o reset?"
+    );
+    if (!firstConfirm) return;
+
+    const secondConfirm = window.confirm(
+      "❗ CONFIRMAÇÃO FINAL DE SEGURANÇA ❗\n\n" +
+      "Confirma novamente a exclusão completa e irreversível dos dados da plataforma?"
+    );
+    if (!secondConfirm) return;
+
     // Clear major functional arrays in state
     setImportedRoutes([]);
     setAudits([]);
@@ -124,6 +142,8 @@ export default function App() {
     } catch (e) {
       console.warn("Reset server push error:", e);
     }
+
+    alert("Base de dados da plataforma redefinida com sucesso.");
   };
 
   const handleSaveCustomManual = (html: string) => {
@@ -337,27 +357,31 @@ export default function App() {
       const remoteCleaned = cleanAudits(db.audits);
       const auditMap = new Map<string, AuditSession>();
 
-      // 1. Set remote Firestore audits as primary ground truth
-      remoteCleaned.forEach(remoteA => {
-        if (remoteA && remoteA.id) auditMap.set(remoteA.id, remoteA);
-      });
-
-      // 2. Merge local pending edits if higher status rank or newer
+      // 1. Base: local audits (guarantees local sessions not yet in remote are preserved)
       const localAudits = AppStore.getAudits() || [];
       localAudits.forEach(localA => {
-        if (!localA || !localA.id) return;
-        const remoteA = auditMap.get(localA.id);
-        if (remoteA) {
-          const localRank = getAuditStatusRank(localA.status);
-          const remoteRank = getAuditStatusRank(remoteA.status);
-          if (localRank > remoteRank) {
-            auditMap.set(localA.id, localA);
-          } else if (localRank === remoteRank) {
-            const remoteTime = remoteA.updatedAt ? new Date(remoteA.updatedAt).getTime() : 0;
-            const localTime = localA.updatedAt ? new Date(localA.updatedAt).getTime() : 0;
-            if (localTime > remoteTime) {
-              auditMap.set(localA.id, localA);
-            }
+        if (localA && localA.id) auditMap.set(localA.id, localA);
+      });
+
+      // 2. Remote updates overwrite local when remote is newer or higher rank
+      remoteCleaned.forEach(remoteA => {
+        if (!remoteA || !remoteA.id) return;
+        const localA = auditMap.get(remoteA.id);
+        if (!localA) {
+          auditMap.set(remoteA.id, remoteA); // new session from another device
+          return;
+        }
+
+        const localRank = getAuditStatusRank(localA.status);
+        const remoteRank = getAuditStatusRank(remoteA.status);
+
+        if (remoteRank > localRank) {
+          auditMap.set(remoteA.id, remoteA);
+        } else if (remoteRank === localRank) {
+          const remoteTime = remoteA.updatedAt ? new Date(remoteA.updatedAt).getTime() : 0;
+          const localTime = localA.updatedAt ? new Date(localA.updatedAt).getTime() : 0;
+          if (remoteTime > localTime) {
+            auditMap.set(remoteA.id, remoteA);
           }
         }
       });
@@ -405,26 +429,36 @@ export default function App() {
       const remoteCleaned = cleanImportedRoutes(db.importedRoutes);
       const routeMap = new Map<string, ImportedRoute>();
 
-      // 1. Set remote Firestore routes as authoritative ground truth
-      remoteCleaned.forEach(remoteR => {
-        if (!remoteR || !remoteR.routeMap) return;
-        const key = normalizeMapCode(remoteR.routeMap).toUpperCase();
-        if (!key) return;
-        routeMap.set(key, remoteR);
-      });
-
-      // 2. Allow local routes if higher status rank
+      // 1. Base: local routes (guarantees routes created locally and not yet synced are never dropped)
       const localRoutes = AppStore.getImportedRoutes() || [];
       localRoutes.forEach(localR => {
         if (!localR || !localR.routeMap) return;
         const key = normalizeMapCode(localR.routeMap).toUpperCase();
+        if (key) routeMap.set(key, localR);
+      });
+
+      // 2. Remote updates overwrite local if key exists and remote is newer/higher rank
+      remoteCleaned.forEach(remoteR => {
+        if (!remoteR || !remoteR.routeMap) return;
+        const key = normalizeMapCode(remoteR.routeMap).toUpperCase();
         if (!key) return;
-        const remoteR = routeMap.get(key);
-        if (remoteR) {
-          const localRank = getRouteStatusRank(localR.status);
-          const remoteRank = getRouteStatusRank(remoteR.status);
-          if (localRank > remoteRank) {
-            routeMap.set(key, localR);
+
+        const localR = routeMap.get(key);
+        if (!localR) {
+          routeMap.set(key, remoteR); // New route from another device
+          return;
+        }
+
+        const localRank = getRouteStatusRank(localR.status);
+        const remoteRank = getRouteStatusRank(remoteR.status);
+
+        if (remoteRank > localRank) {
+          routeMap.set(key, remoteR);
+        } else if (remoteRank === localRank) {
+          const remoteTime = remoteR.updatedAt ? new Date(remoteR.updatedAt).getTime() : (remoteR.importedAt ? new Date(remoteR.importedAt).getTime() : 0);
+          const localTime = localR.updatedAt ? new Date(localR.updatedAt).getTime() : (localR.importedAt ? new Date(localR.importedAt).getTime() : 0);
+          if (remoteTime > localTime) {
+            routeMap.set(key, remoteR);
           }
         }
       });
@@ -532,7 +566,7 @@ export default function App() {
     const interval = setInterval(async () => {
       try {
         // Skip polling if there was a recent write on this client to avoid race conditions
-        if (Date.now() - lastWriteTime.current < 3000) {
+        if (Date.now() - lastWriteTime.current < 8000) {
           return;
         }
         if (isClientFirebaseActive()) {
@@ -584,7 +618,7 @@ export default function App() {
       console.log("[ClientFirebase] Inicializando sincronização em tempo real nativa com Firestore...");
       const unsubscribe = subscribeToFirestore((db) => {
         // Skip applying updates if there was a recent local write on this client to avoid race conditions
-        if (Date.now() - lastWriteTime.current < 4000) {
+        if (Date.now() - lastWriteTime.current < 8000) {
           return;
         }
         applyDirectDb(db);
@@ -613,7 +647,7 @@ export default function App() {
             }
 
             // Skip applying updates if there was a recent local write on this client to avoid race conditions
-            if (Date.now() - lastWriteTime.current < 4000) {
+            if (Date.now() - lastWriteTime.current < 8000) {
               return;
             }
 
@@ -806,7 +840,21 @@ export default function App() {
   };
 
   const handleSaveImportedRoutes = (newRoutes: ImportedRoute[]) => {
-    const cleaned = cleanImportedRoutes(newRoutes);
+    const timestamp = new Date().toISOString();
+    const updatedRoutes = newRoutes.map(newRoute => {
+      const oldRoute = importedRoutes.find(r => r.routeMap === newRoute.routeMap);
+      const oldFunctional = oldRoute ? { ...oldRoute, updatedAt: undefined } : null;
+      const newFunctional = { ...newRoute, updatedAt: undefined };
+      if (!oldFunctional || JSON.stringify(oldFunctional) !== JSON.stringify(newFunctional)) {
+        return {
+          ...newRoute,
+          updatedAt: timestamp
+        };
+      }
+      return newRoute;
+    });
+
+    const cleaned = cleanImportedRoutes(updatedRoutes);
     setImportedRoutes(cleaned);
     AppStore.setImportedRoutes(cleaned);
     pushDatabaseToServer({ importedRoutes: cleaned });
@@ -1118,6 +1166,7 @@ export default function App() {
                 auditLogs={auditLogs}
                 customManualHTML={customManualHTML}
                 onSaveCustomManual={handleSaveCustomManual}
+                onResetPlatformData={handleResetPlatformData}
               />
             )}
 
@@ -1143,6 +1192,7 @@ export default function App() {
                 auditLogs={auditLogs}
                 customManualHTML={customManualHTML}
                 onSaveCustomManual={handleSaveCustomManual}
+                onResetPlatformData={handleResetPlatformData}
               />
             )}
           </>
