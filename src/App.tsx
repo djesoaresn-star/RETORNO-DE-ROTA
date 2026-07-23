@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Driver, Vehicle, Product, ActiveAsset, AuditSession, ReturnForecast, FiscalAlert, ImportedRoute, Vale } from './types';
-import { AppStore } from './store';
 import { DEFAULT_PRODUCTS } from './data';
 import { ImageDB } from './imageDb';
 import { isClientFirebaseActive, fetchDirectlyFromFirestore, saveDirectlyToFirestore, subscribeToFirestore, getClientAuthError, getIsFirestoreQuotaExceeded, setFirestoreQuotaExceeded } from './clientFirebase';
@@ -42,19 +41,23 @@ export default function App() {
   });
   const [activeTab, setActiveTab] = useState<string>('conferencias');
 
-  // Quota status state
+  // Quota & Permission status state
   const [isQuotaExceeded, setIsQuotaExceeded] = useState(getIsFirestoreQuotaExceeded());
+  const [clientPermissionDenied, setClientPermissionDenied] = useState(false);
 
   useEffect(() => {
     const handleQuotaExceeded = () => setIsQuotaExceeded(true);
     const handleQuotaRestored = () => setIsQuotaExceeded(false);
+    const handlePermissionDenied = () => setClientPermissionDenied(true);
 
     window.addEventListener('firestore_quota_exceeded', handleQuotaExceeded);
     window.addEventListener('firestore_quota_restored', handleQuotaRestored);
+    window.addEventListener('client_firestore_permission_denied', handlePermissionDenied);
     
     return () => {
       window.removeEventListener('firestore_quota_exceeded', handleQuotaExceeded);
       window.removeEventListener('firestore_quota_restored', handleQuotaRestored);
+      window.removeEventListener('client_firestore_permission_denied', handlePermissionDenied);
     };
   }, []);
 
@@ -107,13 +110,6 @@ export default function App() {
     setReturnForecasts([]);
     setFiscalAlerts([]);
     setVales([]);
-
-    // Clear local storage
-    AppStore.setImportedRoutes([]);
-    AppStore.setAudits([]);
-    AppStore.setReturnForecasts([]);
-    AppStore.setFiscalAlerts([]);
-    AppStore.setVales([]);
 
     // Clear IndexedDB photos
     try {
@@ -168,7 +164,6 @@ export default function App() {
 
   const handleSaveCustomManual = (html: string) => {
     setCustomManualHTML(html);
-    AppStore.setCustomManual(html);
     pushDatabaseToServer({ customManual: html });
   };
 
@@ -241,15 +236,21 @@ export default function App() {
         };
 
         if (isClientFirebaseActive()) {
+          let fsSuccess = false;
           try {
-            const firestorePromise = saveDirectlyToFirestore(payload);
-            const serverPromise = saveToServer(payload);
-            const [fsSuccess, srvSuccess] = await Promise.all([firestorePromise, serverPromise]);
-            success = fsSuccess || srvSuccess;
+            fsSuccess = await saveDirectlyToFirestore(payload);
           } catch (err) {
-            console.error('[ClientFirebase] Erro ao sincronizar diretamente com o Firestore, tentando fallback via servidor:', err);
-            success = await saveToServer(payload);
+            console.warn('[ClientFirebase] Erro ao sincronizar diretamente com o Firestore:', err);
           }
+
+          let srvSuccess = false;
+          try {
+            srvSuccess = await saveToServer(payload);
+          } catch (err) {
+            // Expected fallback on static hosts like GitHub Pages
+          }
+
+          success = fsSuccess || srvSuccess;
         } else {
           success = await saveToServer(payload);
         }
@@ -356,268 +357,74 @@ export default function App() {
   const applyDirectDb = (db: any) => {
     if (!db) return;
 
-    // Protection: If a local write was performed in the last 15 seconds, defer remote override to protect local user inputs/imports
-    if (Date.now() - lastWriteTime.current < 15000) {
+    // Protection: If a local write was performed in the last 1.5 seconds, defer remote override to protect local user inputs/imports
+    if (Date.now() - lastWriteTime.current < 1500) {
       console.log("[AppSync] Ignorando atualização remota temporariamente para proteger escrita local recente.");
       return;
     }
 
-    if (db.users && db.users.length > 0) {
-      const userMap = new Map<string, User>();
-      const localUsers = AppStore.getUsers() || [];
-      localUsers.forEach(u => { if (u && u.id) userMap.set(u.id, u); });
-      db.users.forEach((u: User) => { if (u && u.id) userMap.set(u.id, { ...userMap.get(u.id), ...u }); });
-      const mergedUsers = Array.from(userMap.values());
-      setUsers(mergedUsers);
-      AppStore.setUsers(mergedUsers);
-
-      const savedUserId = localStorage.getItem('logiroute_authenticated_user_id');
-      if (savedUserId) {
-        const matchedUser = mergedUsers.find((u: User) => u.id === savedUserId);
-        if (matchedUser) setCurrentUser(matchedUser);
+    if (db.users !== undefined && Array.isArray(db.users)) {
+      if (db.users.length > 0) {
+        setUsers(db.users);
+        const savedUserId = localStorage.getItem('logiroute_authenticated_user_id');
+        if (savedUserId) {
+          const matchedUser = db.users.find((u: User) => u.id === savedUserId);
+          if (matchedUser) setCurrentUser(matchedUser);
+        }
       }
     }
 
-    // Cumulative Smart Merge Drivers
     if (db.drivers !== undefined && Array.isArray(db.drivers)) {
-      const driverMap = new Map<string, Driver>();
-      const localDrivers = AppStore.getDrivers() || [];
-      localDrivers.forEach(d => {
-        if (d && (d.id || d.name)) {
-          const key = (d.id || d.name).toString().trim().toLowerCase();
-          driverMap.set(key, d);
-        }
-      });
-      db.drivers.forEach((d: Driver) => {
-        if (d && (d.id || d.name)) {
-          const key = (d.id || d.name).toString().trim().toLowerCase();
-          const existing = driverMap.get(key);
-          driverMap.set(key, existing ? { ...existing, ...d } : d);
-        }
-      });
-      const mergedDrivers = Array.from(driverMap.values());
-      setDrivers(mergedDrivers);
-      AppStore.setDrivers(mergedDrivers);
+      setDrivers(db.drivers);
     }
 
-    // Cumulative Smart Merge Vehicles
     if (db.vehicles !== undefined && Array.isArray(db.vehicles)) {
-      const vehicleMap = new Map<string, Vehicle>();
-      const localVehicles = AppStore.getVehicles() || [];
-      localVehicles.forEach(v => {
-        if (v && v.plate) {
-          const key = v.plate.toString().trim().toUpperCase();
-          vehicleMap.set(key, v);
-        }
-      });
-      db.vehicles.forEach((v: Vehicle) => {
-        if (v && v.plate) {
-          const key = v.plate.toString().trim().toUpperCase();
-          const existing = vehicleMap.get(key);
-          vehicleMap.set(key, existing ? { ...existing, ...v } : v);
-        }
-      });
-      const mergedVehicles = Array.from(vehicleMap.values());
-      setVehicles(mergedVehicles);
-      AppStore.setVehicles(mergedVehicles);
+      setVehicles(db.vehicles);
     }
 
-    // Cumulative Smart Merge Products
     if (db.products !== undefined && Array.isArray(db.products)) {
-      const repairedRemote = repairProductsList(db.products);
-      const productMap = new Map<string, Product>();
-      
-      const localProds = repairProductsList(AppStore.getProducts() || []);
-      localProds.forEach(p => {
-        if (p && p.code) productMap.set(p.code.toString().trim(), p);
-      });
-
-      repairedRemote.forEach(p => {
-        if (p && p.code) {
-          const key = p.code.toString().trim();
-          const localP = productMap.get(key);
-          if (!localP) {
-            productMap.set(key, p);
-          } else {
-            productMap.set(key, {
-              ...localP,
-              ...p,
-              description: (p.description && p.description !== p.code) ? p.description : localP.description
-            });
-          }
-        }
-      });
-
-      const mergedProducts = Array.from(productMap.values());
-      setProducts(mergedProducts);
-      AppStore.setProducts(mergedProducts);
+      const repaired = repairProductsList(db.products);
+      setProducts(repaired);
     }
 
-    // Cumulative Smart Merge Active Assets
     if (db.activeAssets !== undefined && Array.isArray(db.activeAssets)) {
-      const assetMap = new Map<string, ActiveAsset>();
-      const localAssets = AppStore.getActiveAssets() || [];
-      localAssets.forEach(a => {
-        if (a && a.id) {
-          const key = a.id.toString().trim().toLowerCase();
-          assetMap.set(key, a);
-        }
-      });
-      db.activeAssets.forEach((a: ActiveAsset) => {
-        if (a && a.id) {
-          const key = a.id.toString().trim().toLowerCase();
-          const existing = assetMap.get(key);
-          assetMap.set(key, existing ? { ...existing, ...a } : a);
-        }
-      });
-      const mergedAssets = Array.from(assetMap.values());
-      setActiveAssets(mergedAssets);
-      AppStore.setActiveAssets(mergedAssets);
+      setActiveAssets(db.activeAssets);
     }
 
-    // Smart Merge Audits
-    if (db.audits !== undefined) {
-      const remoteCleaned = cleanAudits(db.audits);
-      if (remoteCleaned.length === 0) {
-        setAudits([]);
-        AppStore.setAudits([]);
-      } else {
-        const auditMap = new Map<string, AuditSession>();
-
-        // 1. Base: local audits (guarantees local sessions not yet in remote are preserved)
-        const localAudits = AppStore.getAudits() || [];
-        localAudits.forEach(localA => {
-          if (localA && localA.id) auditMap.set(localA.id, localA);
-        });
-
-        // 2. Remote updates overwrite local when remote is newer or higher rank
-        remoteCleaned.forEach(remoteA => {
-          if (!remoteA || !remoteA.id) return;
-          const localA = auditMap.get(remoteA.id);
-          if (!localA) {
-            auditMap.set(remoteA.id, remoteA); // new session from another device
-            return;
-          }
-
-          const localRank = getAuditStatusRank(localA.status);
-          const remoteRank = getAuditStatusRank(remoteA.status);
-
-          if (remoteRank > localRank) {
-            auditMap.set(remoteA.id, remoteA);
-          } else if (remoteRank === localRank) {
-            const remoteTime = remoteA.updatedAt ? new Date(remoteA.updatedAt).getTime() : 0;
-            const localTime = localA.updatedAt ? new Date(localA.updatedAt).getTime() : 0;
-            if (remoteTime > localTime) {
-              auditMap.set(remoteA.id, remoteA);
-            }
-          }
-        });
-
-        const mergedAudits = Array.from(auditMap.values());
-        setAudits(mergedAudits);
-        AppStore.setAudits(mergedAudits);
-      }
+    if (db.audits !== undefined && Array.isArray(db.audits)) {
+      const cleaned = cleanAudits(db.audits);
+      setAudits(cleaned);
     }
 
-    // Smart Merge Vales
-    if (db.vales !== undefined) {
-      const remoteCleaned = cleanVales(db.vales);
-      if (remoteCleaned.length === 0) {
-        setVales([]);
-        AppStore.setVales([]);
-      } else {
-        const localVales = AppStore.getVales() || [];
-        const valeMap = new Map<string, Vale>();
-        localVales.forEach(v => { if (v && v.id) valeMap.set(v.id, v); });
-        remoteCleaned.forEach(rv => {
-          if (rv && rv.id) valeMap.set(rv.id, rv);
-        });
-        const mergedVales = Array.from(valeMap.values());
-        setVales(mergedVales);
-        AppStore.setVales(mergedVales);
-      }
+    if (db.vales !== undefined && Array.isArray(db.vales)) {
+      const cleaned = cleanVales(db.vales);
+      setVales(cleaned);
     }
 
-    // Smart Merge Return Forecasts
-    if (db.returnForecasts !== undefined) {
-      const remoteCleaned = cleanReturnForecasts(db.returnForecasts);
-      if (remoteCleaned.length === 0) {
-        setReturnForecasts([]);
-        AppStore.setReturnForecasts([]);
-      } else {
-        const localForecasts = AppStore.getReturnForecasts() || [];
-        const forecastMap = new Map<string, ReturnForecast>();
-        localForecasts.forEach(f => { if (f && f.id) forecastMap.set(f.id, f); });
-        remoteCleaned.forEach(rf => {
-          if (rf && rf.id) forecastMap.set(rf.id, rf);
-        });
-        const mergedForecasts = Array.from(forecastMap.values());
-        setReturnForecasts(mergedForecasts);
-        AppStore.setReturnForecasts(mergedForecasts);
-      }
+    if (db.returnForecasts !== undefined && Array.isArray(db.returnForecasts)) {
+      const cleaned = cleanReturnForecasts(db.returnForecasts);
+      setReturnForecasts(cleaned);
     }
 
-    if (db.fiscalAlerts !== undefined) {
+    if (db.fiscalAlerts !== undefined && Array.isArray(db.fiscalAlerts)) {
       setFiscalAlerts(db.fiscalAlerts);
-      AppStore.setFiscalAlerts(db.fiscalAlerts);
     }
 
     // Smart Merge Imported Routes
     if (db.importedRoutes !== undefined) {
       const remoteCleaned = cleanImportedRoutes(db.importedRoutes);
-      if (remoteCleaned.length === 0) {
-        setImportedRoutes([]);
-        AppStore.setImportedRoutes([]);
-      } else {
-        const routeMap = new Map<string, ImportedRoute>();
-
-        // 1. Primary: load all canonical remote routes from database
-        remoteCleaned.forEach(remoteR => {
-          if (!remoteR || !remoteR.routeMap) return;
-          const mapKey = normalizeMapCode(remoteR.routeMap).toUpperCase();
-          const fullKey = `${mapKey}_${remoteR.routeDate || ''}`;
-          if (mapKey) {
-            routeMap.set(fullKey, remoteR);
-          }
-        });
-
-        // 2. Secondary: preserve local route edits or newly created unsynced local routes
-        const localRoutes = AppStore.getImportedRoutes() || [];
-        localRoutes.forEach(localR => {
-          if (!localR || !localR.routeMap) return;
-          const mapKey = normalizeMapCode(localR.routeMap).toUpperCase();
-          const fullKey = `${mapKey}_${localR.routeDate || ''}`;
-          if (!mapKey) return;
-
-          const remoteR = routeMap.get(fullKey) || routeMap.get(mapKey);
-          if (!remoteR) {
-            // Keep locally created route if created recently
-            routeMap.set(fullKey, localR);
-          } else {
-            // Merge status/items if local user has progressed the route status
-            const localRank = getRouteStatusRank(localR.status);
-            const remoteRank = getRouteStatusRank(remoteR.status);
-
-            if (localRank > remoteRank) {
-              routeMap.set(fullKey, localR);
-            } else if (localRank === remoteRank) {
-              const localTime = localR.updatedAt ? new Date(localR.updatedAt).getTime() : 0;
-              const remoteTime = remoteR.updatedAt ? new Date(remoteR.updatedAt).getTime() : 0;
-              if (localTime > remoteTime) {
-                routeMap.set(fullKey, localR);
-              }
-            }
-          }
-        });
-
-        const mergedRoutes = Array.from(routeMap.values());
-        setImportedRoutes(mergedRoutes);
-        AppStore.setImportedRoutes(mergedRoutes);
-      }
+      setImportedRoutes(remoteCleaned);
     }
 
-    if (db.audit_logs) { setAuditLogs(db.audit_logs); AppStore.setAuditLogs(db.audit_logs); }
-    if (db.customManual !== undefined) { setCustomManualHTML(db.customManual); AppStore.setCustomManual(db.customManual); }
+    if (db.audit_logs || db.auditLogs) {
+      const logs = db.audit_logs || db.auditLogs;
+      setAuditLogs(logs);
+    }
+
+    if (db.customManual !== undefined) {
+      const manualContent = typeof db.customManual === 'string' ? db.customManual : db.customManual?.html || '';
+      setCustomManualHTML(manualContent);
+    }
   };
 
   // Immediate flush of pending database updates on page reload / unload
@@ -653,27 +460,14 @@ export default function App() {
     };
   }, []);
 
-  // Load all databases from store on mount and establish server sync
+  // Establish direct Firestore / server synchronization on mount
   useEffect(() => {
-    // 1. Initial quick load from LocalStorage
-    const loadedUsers = AppStore.getUsers();
-    setUsers(loadedUsers);
-    setDrivers(AppStore.getDrivers());
-    setVehicles(AppStore.getVehicles());
-    setProducts(repairProductsList(AppStore.getProducts()));
-    setActiveAssets(AppStore.getActiveAssets());
-    setAudits(cleanAudits(AppStore.getAudits()));
-    setVales(cleanVales(AppStore.getVales()));
-    setReturnForecasts(cleanReturnForecasts(AppStore.getReturnForecasts()));
-    setFiscalAlerts(AppStore.getFiscalAlerts());
-    setImportedRoutes(cleanImportedRoutes(AppStore.getImportedRoutes()));
-    setAuditLogs(AppStore.getAuditLogs());
-    setCustomManualHTML(AppStore.getCustomManual());
-
-    // Check persistent user ID if authenticated
+    // 1. Check persistent user ID if authenticated
     const savedUserId = localStorage.getItem('logiroute_authenticated_user_id');
-    const defaultUser = loadedUsers.find(u => u.id === savedUserId) || loadedUsers.find(u => u.id === 'usr_1') || loadedUsers[0];
-    setCurrentUser(defaultUser || null);
+    const defaultUser = users.find(u => u.id === savedUserId) || users.find(u => u.id === 'usr_1') || users[0];
+    if (defaultUser) {
+      setCurrentUser(defaultUser);
+    }
 
     // 2. Fetch latest online database from server
     const fetchLatestServerData = async () => {
@@ -714,7 +508,7 @@ export default function App() {
     const interval = setInterval(async () => {
       try {
         // Skip polling if there was a recent write on this client to avoid race conditions
-        if (Date.now() - lastWriteTime.current < 8000) {
+        if (Date.now() - lastWriteTime.current < 1500) {
           return;
         }
         if (isClientFirebaseActive()) {
@@ -762,11 +556,11 @@ export default function App() {
 
   // 4. Setup real-time database updates via Server-Sent Events (SSE) or Firestore Live Sync
   useEffect(() => {
-    if (isClientFirebaseActive()) {
+    if (!clientPermissionDenied && isClientFirebaseActive()) {
       console.log("[ClientFirebase] Inicializando sincronização em tempo real nativa com Firestore...");
       const unsubscribe = subscribeToFirestore((db) => {
         // Skip applying updates if there was a recent local write on this client to avoid race conditions
-        if (Date.now() - lastWriteTime.current < 8000) {
+        if (Date.now() - lastWriteTime.current < 1500) {
           return;
         }
         applyDirectDb(db);
@@ -795,7 +589,7 @@ export default function App() {
             }
 
             // Skip applying updates if there was a recent local write on this client to avoid race conditions
-            if (Date.now() - lastWriteTime.current < 8000) {
+            if (Date.now() - lastWriteTime.current < 1500) {
               return;
             }
 
@@ -827,7 +621,7 @@ export default function App() {
         clearTimeout(reconnectTimeout);
       }
     };
-  }, []);
+  }, [clientPermissionDenied]);
 
   // Real-time synchronization across tabs of the SAME browser
   useEffect(() => {
@@ -835,38 +629,31 @@ export default function App() {
       ? new BroadcastChannel('logiroute_realtime_sync')
       : null;
 
-    const reloadStoreState = () => {
-      setUsers(AppStore.getUsers());
-      setDrivers(AppStore.getDrivers());
-      setVehicles(AppStore.getVehicles());
-      setProducts(AppStore.getProducts());
-      setActiveAssets(AppStore.getActiveAssets());
-      setAudits(AppStore.getAudits());
-      setVales(AppStore.getVales());
-      setReturnForecasts(AppStore.getReturnForecasts());
-      setFiscalAlerts(AppStore.getFiscalAlerts());
-      setImportedRoutes(AppStore.getImportedRoutes());
+    const reloadServerState = async () => {
+      if (isClientFirebaseActive()) {
+        const directDb = await fetchDirectlyFromFirestore();
+        if (directDb) applyDirectDb(directDb);
+      } else {
+        try {
+          const res = await fetch('/api/db');
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && data.db) applyDirectDb(data.db);
+          }
+        } catch (e) {}
+      }
     };
 
     if (channel) {
       channel.onmessage = (event) => {
         if (event.data && (event.data.type === 'SYNC_KEY' || event.data.type === 'RESET_PLATFORM')) {
-          reloadStoreState();
+          reloadServerState();
         }
       };
     }
 
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key && e.key.startsWith('logiroute_')) {
-        reloadStoreState();
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-
     return () => {
       if (channel) channel.close();
-      window.removeEventListener('storage', handleStorageChange);
     };
   }, []);
 
@@ -930,25 +717,21 @@ export default function App() {
   // Sync state changes back to AppStore (localStorage) and Server
   const handleSaveUsers = (newUsers: User[]) => {
     setUsers(newUsers);
-    AppStore.setUsers(newUsers);
     pushDatabaseToServer({ users: newUsers });
   };
 
   const handleSaveDrivers = (newDrivers: Driver[]) => {
     setDrivers(newDrivers);
-    AppStore.setDrivers(newDrivers);
     pushDatabaseToServer({ drivers: newDrivers });
   };
 
   const handleSaveVehicles = (newVehicles: Vehicle[]) => {
     setVehicles(newVehicles);
-    AppStore.setVehicles(newVehicles);
     pushDatabaseToServer({ vehicles: newVehicles });
   };
 
   const handleSaveProducts = (newProducts: Product[]) => {
     setProducts(newProducts);
-    AppStore.setProducts(newProducts);
     pushDatabaseToServer({ products: newProducts });
   };
 
@@ -970,27 +753,29 @@ export default function App() {
 
     const cleaned = cleanAudits(updatedAudits);
     setAudits(cleaned);
-    AppStore.setAudits(cleaned);
     pushDatabaseToServer({ audits: cleaned });
   };
 
   const handleSaveForecasts = (newForecasts: ReturnForecast[]) => {
     const cleaned = cleanReturnForecasts(newForecasts);
     setReturnForecasts(cleaned);
-    AppStore.setReturnForecasts(cleaned);
     pushDatabaseToServer({ returnForecasts: cleaned });
   };
 
   const handleSaveAlerts = (newAlerts: FiscalAlert[]) => {
     setFiscalAlerts(newAlerts);
-    AppStore.setFiscalAlerts(newAlerts);
     pushDatabaseToServer({ fiscalAlerts: newAlerts });
   };
 
   const handleSaveImportedRoutes = (newRoutes: ImportedRoute[]) => {
     const timestamp = new Date().toISOString();
     const updatedRoutes = newRoutes.map(newRoute => {
-      const oldRoute = importedRoutes.find(r => r.routeMap === newRoute.routeMap);
+      const newMapKey = normalizeMapCode(newRoute.routeMap).toUpperCase();
+      const newDate = newRoute.routeDate || '';
+      const oldRoute = importedRoutes.find(r => 
+        normalizeMapCode(r.routeMap).toUpperCase() === newMapKey &&
+        (r.routeDate || '') === newDate
+      );
       const oldFunctional = oldRoute ? { ...oldRoute, updatedAt: undefined } : null;
       const newFunctional = { ...newRoute, updatedAt: undefined };
       if (!oldFunctional || JSON.stringify(oldFunctional) !== JSON.stringify(newFunctional)) {
@@ -1004,14 +789,12 @@ export default function App() {
 
     const cleaned = cleanImportedRoutes(updatedRoutes);
     setImportedRoutes(cleaned);
-    AppStore.setImportedRoutes(cleaned);
     pushDatabaseToServer({ importedRoutes: cleaned });
   };
 
   const handleSaveVales = (newVales: Vale[]) => {
     const cleaned = cleanVales(newVales);
     setVales(cleaned);
-    AppStore.setVales(cleaned);
     pushDatabaseToServer({ vales: cleaned });
   };
 

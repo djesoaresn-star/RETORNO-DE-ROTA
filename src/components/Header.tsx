@@ -39,6 +39,20 @@ export default function Header({
   theme = 'light',
   onToggleTheme
 }: HeaderProps) {
+  function convertToDirectDownloadUrl(url: string): string {
+    if (!url) return '';
+    const trimmed = url.trim();
+    if (trimmed.includes('drive.google.com') && trimmed.includes('/d/')) {
+      const match = trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) {
+        return `https://drive.google.com/uc?export=download&id=${match[1]}`;
+      }
+    }
+    if (trimmed.includes('dropbox.com')) {
+      return trimmed.replace('dl=0', 'dl=1');
+    }
+    return trimmed;
+  }
   const [showNotifications, setShowNotifications] = useState(false);
   const bellContainerRef = useRef<HTMLDivElement>(null);
 
@@ -134,59 +148,15 @@ export default function Header({
     };
   }, []);
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('logiroute_custom_apk_url') || '';
-      setCustomApkUrl(stored);
-    }
-  }, []);
-
-  const convertToDirectDownloadUrl = (url: string): string => {
-    if (!url || url.trim() === '') return '';
-    const trimmed = url.trim();
-
-    // 1. Google Drive Sharing Link Conversion
-    const driveFileIdMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-    if (driveFileIdMatch && driveFileIdMatch[1]) {
-      return `https://drive.google.com/uc?export=download&id=${driveFileIdMatch[1]}`;
-    }
-    
-    const driveOpenIdMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-    if (trimmed.includes('drive.google.com') && driveOpenIdMatch && driveOpenIdMatch[1]) {
-      return `https://drive.google.com/uc?export=download&id=${driveOpenIdMatch[1]}`;
-    }
-
-    // 2. Dropbox Link Conversion
-    if (trimmed.includes('dropbox.com')) {
-      if (trimmed.includes('dl=0')) {
-        return trimmed.replace('dl=0', 'dl=1');
-      } else if (!trimmed.includes('dl=')) {
-        return trimmed + (trimmed.includes('?') ? '&dl=1' : '?dl=1');
-      }
-    }
-
-    // 3. GitHub blob/view links to raw.githubusercontent.com
-    if (trimmed.includes('github.com') && trimmed.includes('/blob/')) {
-      return trimmed
-        .replace('github.com', 'raw.githubusercontent.com')
-        .replace('/blob/', '/');
-    }
-
-    return trimmed;
-  };
-
   const handleSaveCustomApkUrl = () => {
-    if (typeof window !== 'undefined') {
-      const convertedUrl = convertToDirectDownloadUrl(customApkUrl);
-      localStorage.setItem('logiroute_custom_apk_url', convertedUrl);
-      setCustomApkUrl(convertedUrl);
-      
-      let message = "Link do APK salvo com sucesso! O botão de download agora utilizará este endereço.";
-      if (convertedUrl !== customApkUrl) {
-        message = `Seu link foi detectado e convertido automaticamente para Download Direto!\n\nLink Original:\n${customApkUrl}\n\nLink Convertido:\n${convertedUrl}\n\nIsso evita o download de páginas HTML corrompidas e resolve o 'Erro ao analisar o pacote' no Android!`;
-      }
-      alert(message);
+    const convertedUrl = convertToDirectDownloadUrl(customApkUrl);
+    setCustomApkUrl(convertedUrl);
+    
+    let message = "Link do APK configurado para esta sessão!";
+    if (convertedUrl !== customApkUrl) {
+      message = `Seu link foi detectado e convertido automaticamente para Download Direto!\n\nLink Original:\n${customApkUrl}\n\nLink Convertido:\n${convertedUrl}`;
     }
+    alert(message);
   };
 
   useEffect(() => {
@@ -236,11 +206,8 @@ export default function Header({
   };
 
   const getApkUrl = () => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('logiroute_custom_apk_url');
-      if (stored && stored.trim() !== '') {
-        return stored.trim();
-      }
+    if (customApkUrl && customApkUrl.trim() !== '') {
+      return customApkUrl.trim();
     }
 
     if (typeof window === 'undefined') return '/guarabira_acuracidade_v2.1.0.apk';
@@ -479,7 +446,7 @@ export default function Header({
                   return (
                     <div 
                       id="notifications_popover"
-                      className="absolute right-0 mt-2 w-80 bg-slate-950 border border-slate-800 rounded-xl shadow-2xl z-50 overflow-hidden"
+                      className="absolute right-0 mt-2 w-[calc(100vw-2rem)] max-w-xs sm:w-80 bg-slate-950 border border-slate-800 rounded-xl shadow-2xl z-50 overflow-hidden"
                     >
                       <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-900">
                         <span className="font-sans font-bold text-xs text-white uppercase tracking-wider">Notificações</span>
@@ -1294,7 +1261,7 @@ export default function Header({
               <div className="grid grid-cols-2 gap-2 font-mono text-[11px] bg-slate-50 p-3 rounded-xl border border-slate-200">
                 <div>
                   <span className="block text-[9px] font-sans uppercase tracking-wider text-slate-400 font-bold">Projeto Firebase</span>
-                  <span className="font-semibold text-slate-700 truncate block">{firebaseConfig.projectId || 'sstr-7dd45'}</span>
+                  <span className="font-semibold text-slate-700 truncate block">{firebaseConfig.projectId || 'armazem-facil--oficial'}</span>
                 </div>
                 <div>
                   <span className="block text-[9px] font-sans uppercase tracking-wider text-slate-400 font-bold">Banco Firestore ID</span>

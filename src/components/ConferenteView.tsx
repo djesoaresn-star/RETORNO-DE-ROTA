@@ -97,10 +97,16 @@ export default function ConferenteView({
     const matchingRoute = importedRoutes.find(r => r.routeMap.toUpperCase() === f.routeMap.toUpperCase());
     
     if (f.tripStatus === 'pernoitam') {
-      return {
-        label: 'PERNOITE',
-        color: 'bg-red-100 text-red-700 border-red-300 font-extrabold uppercase'
-      };
+      const todayStr = new Date().toISOString().split('T')[0];
+      const isClosed = (matchingAudit && (matchingAudit.status === 'finalizado_ok' || matchingAudit.status === 'finalizado_divergente' || matchingAudit.surplusFlowStatus === 'BAIXADO')) || (matchingRoute && matchingRoute.status === 'fechado');
+      const isDateRolledOver = f.updatedAt && f.updatedAt.split('T')[0] < todayStr;
+
+      if (!isClosed && !isDateRolledOver && f.status !== 'no_patio') {
+        return {
+          label: 'PERNOITE',
+          color: 'bg-red-100 text-red-700 border-red-300 font-extrabold uppercase'
+        };
+      }
     }
 
     if (
@@ -460,6 +466,35 @@ export default function ConferenteView({
     return `${m}:${s}`;
   };
 
+  // Auto-persist active session ID in localStorage and restore on mount
+  useEffect(() => {
+    if (activeSession) {
+      localStorage.setItem('conferente_active_session_id', activeSession.id);
+    } else {
+      localStorage.removeItem('conferente_active_session_id');
+    }
+  }, [activeSession?.id]);
+
+  useEffect(() => {
+    if (!activeSession && audits && audits.length > 0) {
+      const savedSessionId = localStorage.getItem('conferente_active_session_id');
+      if (savedSessionId) {
+        const found = audits.find(a => a.id === savedSessionId && a.status !== 'finalizado_ok' && a.status !== 'finalizado_divergente');
+        if (found) {
+          handleOpenSession(found);
+          return;
+        }
+      }
+      const activeForUser = audits.find(a => 
+        (a.status === 'em_aberto' || a.status === 'reconferencia') && 
+        a.conferenteId === currentUser.id
+      );
+      if (activeForUser) {
+        handleOpenSession(activeForUser);
+      }
+    }
+  }, []);
+
   const handleOpenSession = (audit: AuditSession) => {
     const nowStr = new Date().toISOString();
     setLoadedSessionTime(audit.updatedAt);
@@ -487,11 +522,20 @@ export default function ConferenteView({
       }));
     }
 
+    // Calculate accumulated elapsed duration from previous session run if active
+    let accumulatedMs = audit.totalCountingDurationMs || 0;
+    if (!audit.isSuspended && audit.lastTimerStart) {
+      const delta = Date.now() - new Date(audit.lastTimerStart).getTime();
+      if (delta > 0 && !isNaN(delta)) {
+        accumulatedMs += delta;
+      }
+    }
+
     // If already suspended, don't start ticking. Else, tick starting now.
     const updatedSession: AuditSession = {
       ...audit,
       lastTimerStart: audit.isSuspended ? undefined : nowStr,
-      totalCountingDurationMs: audit.totalCountingDurationMs || 0,
+      totalCountingDurationMs: accumulatedMs,
       exchanges: initialExchanges,
       assets: initialAssets
     };
@@ -3034,7 +3078,7 @@ export default function ConferenteView({
                     </div>
 
                     {/* DESKTOP VIEW (table) */}
-                    <div className="hidden sm:block border border-slate-100 rounded-lg overflow-hidden shadow-xs">
+                    <div className="hidden sm:block border border-slate-100 rounded-lg overflow-x-auto shadow-xs">
                       <table className="min-w-full divide-y divide-slate-100 text-left">
                         <thead className="bg-slate-50">
                           <tr>
@@ -3194,7 +3238,7 @@ export default function ConferenteView({
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <div className="border border-slate-100 rounded-lg overflow-hidden shadow-xs">
+                    <div className="border border-slate-100 rounded-lg overflow-x-auto shadow-xs">
                       <table className="min-w-full divide-y divide-slate-100 text-left">
                         <thead className="bg-slate-50">
                           <tr>
@@ -4158,7 +4202,7 @@ export default function ConferenteView({
       )}
 
       {/* Botão Flutuante da Calculadora de Garrafas */}
-      <div className="fixed bottom-24 right-6 z-40 font-sans" id="bottle_calculator_fab_wrapper">
+      <div className="fixed bottom-20 right-3 sm:bottom-24 sm:right-6 z-40 font-sans max-w-[calc(100vw-1.5rem)]" id="bottle_calculator_fab_wrapper">
         <button
           type="button"
           id="btn_toggle_calculator"
@@ -4178,7 +4222,7 @@ export default function ConferenteView({
       {isCalculatorOpen && (
         <div 
           id="bottle_calculator_window"
-          className="fixed bottom-36 right-6 z-50 bg-slate-900 border border-slate-700 shadow-2xl rounded-2xl w-80 p-5 text-white animate-fade-in"
+          className="fixed bottom-32 right-3 sm:bottom-36 sm:right-6 z-50 bg-slate-900 border border-slate-700 shadow-2xl rounded-2xl w-[calc(100vw-1.5rem)] max-w-xs sm:w-80 p-5 text-white animate-fade-in"
         >
           <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
             <div className="flex items-center space-x-2 text-amber-400">

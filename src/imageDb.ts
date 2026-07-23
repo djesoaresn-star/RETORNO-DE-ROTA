@@ -4,7 +4,7 @@
  * Falls back to highly resilient in-memory storage if IndexedDB is disabled, blocked or sandboxed in an iframe.
  */
 
-import { isClientFirebaseActive, getClientFirestore, isQuotaError, setFirestoreQuotaExceeded } from './clientFirebase';
+import { isClientFirebaseActive, getClientFirestore, isQuotaError, setFirestoreQuotaExceeded, checkPermissionError, isPermissionError } from './clientFirebase';
 import { doc, setDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
 export interface PhotoRecord {
@@ -116,7 +116,9 @@ export class ImageDB {
             isSynced = true;
           } catch (fsErr) {
             console.warn('[ImageDB] Falha na gravação direta do Firestore para nova foto. Tentando fallback via API do servidor...', fsErr);
-            if (isQuotaError(fsErr)) {
+            if (isPermissionError(fsErr)) {
+              checkPermissionError(fsErr);
+            } else if (isQuotaError(fsErr)) {
               setFirestoreQuotaExceeded(true);
             }
           }
@@ -199,7 +201,9 @@ export class ImageDB {
               isSynced = true;
             } catch (fsErr) {
               console.warn(`[ImageDB] Falha na gravação direta do Firestore para foto pendente ${p.id}. Tentando fallback via API do servidor...`, fsErr);
-              if (isQuotaError(fsErr)) {
+              if (isPermissionError(fsErr)) {
+                checkPermissionError(fsErr);
+              } else if (isQuotaError(fsErr)) {
                 setFirestoreQuotaExceeded(true);
               }
             }
@@ -507,7 +511,9 @@ export class ImageDB {
       }
     } catch (e) {
       console.log("Error querying server photos.", e);
-      if (isQuotaError(e)) {
+      if (isPermissionError(e)) {
+        checkPermissionError(e);
+      } else if (isQuotaError(e)) {
         setFirestoreQuotaExceeded(true);
       }
     }
@@ -641,7 +647,9 @@ export class ImageDB {
       }
     } catch (e) {
       console.log("Error querying all server photos.", e);
-      if (isQuotaError(e)) {
+      if (isPermissionError(e)) {
+        checkPermissionError(e);
+      } else if (isQuotaError(e)) {
         setFirestoreQuotaExceeded(true);
       }
     }
@@ -684,7 +692,9 @@ export class ImageDB {
       }
     } catch (e) {
       console.log('Server file deletion bypassed in background.', e);
-      if (isQuotaError(e)) {
+      if (isPermissionError(e)) {
+        checkPermissionError(e);
+      } else if (isQuotaError(e)) {
         setFirestoreQuotaExceeded(true);
       }
     }

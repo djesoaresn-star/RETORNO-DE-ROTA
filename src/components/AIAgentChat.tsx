@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, Send, X, Sparkles, Bot, User, CornerDownLeft } from 'lucide-react';
-import { AppStore } from '../store';
-import { isClientFirebaseActive, getGeminiKeyFromFirestore } from '../clientFirebase';
+import { isClientFirebaseActive, getGeminiKeyFromFirestore, fetchDirectlyFromFirestore } from '../clientFirebase';
 import { GoogleGenAI } from '@google/genai';
 
 interface ChatMessage {
@@ -63,19 +62,15 @@ export default function AIAgentChat() {
     // Helper to run client-side Gemini call as fallback or primary
     const runClientSideGemini = async () => {
       console.log("[ClientFirebase] Tentando usar o Gemini diretamente no cliente...");
-      let apiKey = localStorage.getItem('logiroute_gemini_api_key') || '';
+      let apiKey = '';
       
-      // If key is empty in localStorage, attempt loading it from Firestore directly for multi-device sync
-      if (!apiKey && isClientFirebaseActive()) {
-        try {
-          const firestoreKey = await getGeminiKeyFromFirestore();
-          if (firestoreKey) {
-            apiKey = firestoreKey;
-            localStorage.setItem('logiroute_gemini_api_key', firestoreKey);
-          }
-        } catch (e) {
-          console.warn("[ClientFirebase] Falha ao ler chave do Gemini do Firestore:", e);
+      try {
+        const firestoreKey = await getGeminiKeyFromFirestore();
+        if (firestoreKey) {
+          apiKey = firestoreKey;
         }
+      } catch (e) {
+        console.warn("[ClientFirebase] Falha ao ler chave do Gemini do Firestore:", e);
       }
 
       if (!apiKey) {
@@ -85,17 +80,18 @@ export default function AIAgentChat() {
       }
 
       if (!apiKey) {
-        throw new Error("Chave API do Gemini não configurada. Salve sua chave no painel de Configurações (Aba Conexão Firebase) como Gestor para utilizar o Assistente de forma global no GitHub Pages ou no Google AI Studio.");
+        throw new Error("Chave API do Gemini não configurada. Salve sua chave no painel de Configurações (Aba Conexão Firebase) como Gestor para utilizar o Assistente de forma global.");
       }
 
       const ai = new GoogleGenAI({ apiKey });
 
       let activeDatabaseContext = "Nenhum dado ativo no momento.";
       try {
-        const routes = AppStore.getImportedRoutes() || [];
-        const audits = AppStore.getAudits() || [];
-        const vales = AppStore.getVales() || [];
-        const drivers = AppStore.getDrivers() || [];
+        const dbData = await fetchDirectlyFromFirestore();
+        const routes = dbData?.importedRoutes || [];
+        const audits = dbData?.audits || [];
+        const vales = dbData?.vales || [];
+        const drivers = dbData?.drivers || [];
 
         const openRoutes = routes.filter((r: any) => r.status !== 'fechado');
         const closedRoutes = routes.filter((r: any) => r.status === 'fechado');
@@ -370,13 +366,13 @@ ${activeDatabaseContext}
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-40 font-sans" id="ai_agent_chat_wrapper">
+    <div className="fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-40 font-sans max-w-[calc(100vw-1.5rem)]" id="ai_agent_chat_wrapper">
       {/* Floating Action Button (FAB) */}
       {!isOpen && (
         <button
           id="ai_chat_fab_button"
           onClick={() => setIsOpen(true)}
-          className="relative group bg-[#0f35a9] hover:bg-[#0c2a86] text-white p-4 rounded-full shadow-2xl transition-all duration-300 flex items-center justify-center cursor-pointer border border-[#0f35a9]/50 hover:scale-105"
+          className="relative group bg-[#0f35a9] hover:bg-[#0c2a86] text-white p-3.5 sm:p-4 rounded-full shadow-2xl transition-all duration-300 flex items-center justify-center cursor-pointer border border-[#0f35a9]/50 hover:scale-105"
           title="Fale com a Inteligência Artificial"
         >
           {hasNewMessage && (
@@ -385,7 +381,7 @@ ${activeDatabaseContext}
               <span className="relative inline-flex rounded-full h-4 w-4 bg-amber-500 text-[10px] font-extrabold text-white items-center justify-center">1</span>
             </span>
           )}
-          <Bot className="h-6 w-6 text-white" />
+          <Bot className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
           <span className="max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-500 ease-in-out whitespace-nowrap text-xs font-bold pl-0 group-hover:pl-2">
             Dúvidas? Fale com a I.A
           </span>
@@ -396,7 +392,7 @@ ${activeDatabaseContext}
       {isOpen && (
         <div 
           id="ai_chat_window"
-          className="bg-white rounded-2xl shadow-3xl border border-slate-200 w-80 sm:w-96 h-[480px] flex flex-col overflow-hidden animate-fade-in"
+          className="bg-white rounded-2xl shadow-3xl border border-slate-200 w-[calc(100vw-1.5rem)] max-w-sm sm:w-96 h-[480px] flex flex-col overflow-hidden animate-fade-in"
         >
           {/* Header */}
           <div className="bg-slate-900 px-4 py-3 flex items-center justify-between border-b border-slate-800">
