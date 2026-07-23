@@ -59,6 +59,9 @@ export default function ConferenteView({
   importedRoutes = [],
   onSaveImportedRoutes
 }: ConferenteViewProps) {
+  const getDriverName = (id: string) => id === 'temporario' ? 'Temporário' : (drivers.find(d => d.id === id)?.name || id);
+  const getHelperName = (id?: string) => id ? drivers.find(d => d.id === id)?.name || id : 'Sem ajudante';
+
   // Navigation / active sub-view
   const [activeSession, setActiveSession] = useState<AuditSession | null>(null);
 
@@ -2099,9 +2102,6 @@ export default function ConferenteView({
       return item.physicalQty > 0;
     });
   }, [activeSession]);
-
-  const getDriverName = (id: string) => id === 'temporario' ? 'Temporário' : (drivers.find(d => d.id === id)?.name || id);
-  const getHelperName = (id?: string) => id ? drivers.find(d => d.id === id)?.name || id : 'Sem ajudante';
 
   const pendingOrActiveAudits = audits.filter(a => 
     a.status === 'em_aberto' || a.status === 'reconferencia' || a.reopeningRequested === true
