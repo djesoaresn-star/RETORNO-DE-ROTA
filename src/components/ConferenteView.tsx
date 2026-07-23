@@ -623,6 +623,23 @@ export default function ConferenteView({
     onSaveAudits(updatedAudits);
   };
 
+  const findMapInfo = (mCode: string) => {
+    const mapUpper = mCode.trim().toUpperCase();
+    const openItem = openRoutesList.find(x => x.routeMap.toUpperCase() === mapUpper);
+    if (openItem) {
+      return { plate: openItem.plate, driverName: openItem.driverName };
+    }
+    const impItem = importedRoutes.find(x => x.routeMap.toUpperCase() === mapUpper);
+    if (impItem) {
+      return { plate: impItem.plate, driverName: (impItem as any).driverName };
+    }
+    const audItem = audits.find(a => a.routeMap.toUpperCase() === mapUpper);
+    if (audItem) {
+      return { plate: audItem.plate, driverName: getDriverName(audItem.driverId) };
+    }
+    return undefined;
+  };
+
   const handleAddMapTag = (value: string) => {
     const clean = value.trim().toUpperCase();
     if (!clean) return;
@@ -635,18 +652,15 @@ export default function ConferenteView({
       setRouteMap(next.join(' + '));
 
       // Update plates and driver based on selected maps
-      const plates = next.map(m => {
-        const r = importedRoutes.find(x => x.routeMap.toUpperCase() === m.toUpperCase());
-        return r ? r.plate : '';
-      }).filter(Boolean);
+      const plates = next.map(m => findMapInfo(m)?.plate).filter(Boolean) as string[];
       const uniquePlates = Array.from(new Set(plates));
       if (uniquePlates.length > 0) {
         setPlate(uniquePlates.join(' / '));
       }
 
-      const firstRoute = importedRoutes.find(r => r.routeMap.toUpperCase() === next[0].toUpperCase());
-      if (firstRoute) {
-        autoSelectDriverForRoute(firstRoute);
+      const firstInfo = findMapInfo(next[0]);
+      if (firstInfo) {
+        autoSelectDriverForRoute({ driverName: firstInfo.driverName } as any);
       }
 
       // Also sync selectedRoutesForUnify
@@ -669,16 +683,13 @@ export default function ConferenteView({
         setDriverId('');
         setHelperId('');
       } else {
-        const plates = next.map(m => {
-          const r = importedRoutes.find(x => x.routeMap.toUpperCase() === m.toUpperCase());
-          return r ? r.plate : '';
-        }).filter(Boolean);
+        const plates = next.map(m => findMapInfo(m)?.plate).filter(Boolean) as string[];
         const uniquePlates = Array.from(new Set(plates));
         setPlate(uniquePlates.join(' / '));
 
-        const firstRoute = importedRoutes.find(r => r.routeMap.toUpperCase() === next[0].toUpperCase());
-        if (firstRoute) {
-          autoSelectDriverForRoute(firstRoute);
+        const firstInfo = findMapInfo(next[0]);
+        if (firstInfo) {
+          autoSelectDriverForRoute({ driverName: firstInfo.driverName } as any);
         }
       }
 
@@ -712,17 +723,14 @@ export default function ConferenteView({
         setRouteMap(next.join(' + '));
 
         // Find plates of all selected routes
-        const plates = next.map(m => {
-          const r = importedRoutes.find(x => x.routeMap.toUpperCase() === m.toUpperCase());
-          return r ? r.plate : '';
-        }).filter(Boolean);
+        const plates = next.map(m => findMapInfo(m)?.plate).filter(Boolean) as string[];
         const uniquePlates = Array.from(new Set(plates));
         setPlate(uniquePlates.join(' / '));
 
         // Find driver of the first selected route
-        const firstRoute = importedRoutes.find(r => r.routeMap.toUpperCase() === next[0].toUpperCase());
-        if (firstRoute) {
-          autoSelectDriverForRoute(firstRoute);
+        const firstInfo = findMapInfo(next[0]);
+        if (firstInfo) {
+          autoSelectDriverForRoute({ driverName: firstInfo.driverName } as any);
         }
       }
 
@@ -835,7 +843,10 @@ export default function ConferenteView({
       finalRouteMap = selectedRouteMaps.join(' + ');
     }
 
-    // Check if there is already an active/open session for this route map to prevent duplicate cards
+    // Check if any map in finalRouteMap or unifiedMaps already has an active or reconferência session
+    const targetMaps = unifiedMaps && unifiedMaps.length > 0 ? unifiedMaps : [finalRouteMap];
+    const targetMapsUpper = targetMaps.map(m => m.trim().toUpperCase());
+
     const existingActiveSession = audits.find(a => 
       a.routeMap.toUpperCase() === finalRouteMap.toUpperCase() && 
       (a.status === 'em_aberto' || a.status === 'reconferencia')
@@ -858,6 +869,15 @@ export default function ConferenteView({
       setTempHelperName('');
       return;
     }
+
+    // Search for an existing active/reconferencia audit among member maps to unify/update
+    const existingMemberAudit = audits.find(a => 
+      (a.status === 'em_aberto' || a.status === 'reconferencia') &&
+      (
+        targetMapsUpper.includes(a.routeMap.toUpperCase()) ||
+        (a.unifiedMaps && a.unifiedMaps.some(um => targetMapsUpper.includes(um.toUpperCase())))
+      )
+    );
 
     // Initialize clean audit items & assets
     const assetsSource = activeAssets && activeAssets.length > 0 ? activeAssets : DEFAULT_ACTIVE_ASSETS;
@@ -898,53 +918,102 @@ export default function ConferenteView({
     }
 
     const nowStr = new Date().toISOString();
-    const newSession: AuditSession = {
-      id: 'aud_' + Date.now(),
-      routeMap: finalRouteMap,
-      unifiedMaps,
-      plate: finalPlate.toUpperCase(),
-      exchangePlate: exchangePlate.trim().toUpperCase() || undefined,
-      driverId: finalDriverId,
-      helperId: finalHelperId || undefined,
-      arrivalKm: Number(arrivalKm),
-      arrivalDate: new Date().toISOString().split('T')[0],
-      startTime: nowStr,
-      lastTimerStart: nowStr,
-      totalCountingDurationMs: 0,
-      isSuspended: false,
-      status: 'em_aberto',
-      conferenteId: currentUser.id,
-      items: initialItems,
-      assets: initialAssets,
-      exchanges: initialExchanges,
-      history: [
-        {
-          timestamp: nowStr,
-          action: 'Conferência Física Iniciada',
-          user: currentUser.name,
-          details: `KM Chegada: ${arrivalKm}${unifiedMaps && unifiedMaps.length > 0 ? ` (Unificados: ${unifiedMaps.join(', ')})` : ''}`
-        }
-      ]
-    };
+    let sessionToActivate: AuditSession;
 
-    const updated = [newSession, ...audits];
-    onSaveAudits(updated);
+    if (existingMemberAudit) {
+      const isReconferencia = existingMemberAudit.status === 'reconferencia';
+      sessionToActivate = {
+        ...existingMemberAudit,
+        routeMap: finalRouteMap,
+        unifiedMaps: unifiedMaps,
+        plate: finalPlate.toUpperCase(),
+        exchangePlate: exchangePlate.trim().toUpperCase() || existingMemberAudit.exchangePlate,
+        driverId: finalDriverId,
+        helperId: finalHelperId || existingMemberAudit.helperId,
+        arrivalKm: Number(arrivalKm) || existingMemberAudit.arrivalKm,
+        exchanges: initialExchanges.length > 0 ? initialExchanges : existingMemberAudit.exchanges,
+        status: isReconferencia ? 'reconferencia' : 'em_aberto',
+        history: [
+          ...(existingMemberAudit.history || []),
+          {
+            timestamp: nowStr,
+            action: 'Conferência Unificada',
+            user: currentUser.name,
+            details: `Mapas unificados na mesma conferência: ${finalRouteMap} (KM Chegada: ${arrivalKm})`
+          }
+        ]
+      };
 
-    // Automatically transition the matching ImportedRoute status to 'conferindo'
-    if (onSaveImportedRoutes) {
-      const updatedRoutes = importedRoutes.map(r => {
-        const isMatched = r.routeMap.toUpperCase() === finalRouteMap ||
-          (unifiedMaps && unifiedMaps.some(m => m.toUpperCase() === r.routeMap.toUpperCase()));
-        if (isMatched) {
-          return { ...r, status: 'conferindo' as const };
-        }
-        return r;
-      });
-      onSaveImportedRoutes(updatedRoutes);
+      // Filter out duplicate member audits if any, and place updated session
+      const updatedAuditsList = audits.map(a => a.id === existingMemberAudit.id ? sessionToActivate : a)
+        .filter(a => {
+          if (a.id === sessionToActivate.id) return true;
+          const isOtherMemberDuplicate = (a.status === 'em_aberto' || a.status === 'reconferencia') &&
+            targetMapsUpper.includes(a.routeMap.toUpperCase());
+          return !isOtherMemberDuplicate;
+        });
+
+      onSaveAudits(updatedAuditsList);
+
+      if (onSaveImportedRoutes) {
+        const updatedRoutes = importedRoutes.map(r => {
+          const isMatched = r.routeMap.toUpperCase() === finalRouteMap ||
+            (targetMapsUpper.includes(r.routeMap.toUpperCase()));
+          if (isMatched) {
+            const newStatus: 'reconferir' | 'conferindo' = isReconferencia ? 'reconferir' : 'conferindo';
+            return { ...r, status: newStatus };
+          }
+          return r;
+        });
+        onSaveImportedRoutes(updatedRoutes);
+      }
+    } else {
+      const newSession: AuditSession = {
+        id: 'aud_' + Date.now(),
+        routeMap: finalRouteMap,
+        unifiedMaps,
+        plate: finalPlate.toUpperCase(),
+        exchangePlate: exchangePlate.trim().toUpperCase() || undefined,
+        driverId: finalDriverId,
+        helperId: finalHelperId || undefined,
+        arrivalKm: Number(arrivalKm),
+        arrivalDate: new Date().toISOString().split('T')[0],
+        startTime: nowStr,
+        lastTimerStart: nowStr,
+        totalCountingDurationMs: 0,
+        isSuspended: false,
+        status: 'em_aberto',
+        conferenteId: currentUser.id,
+        items: initialItems,
+        assets: initialAssets,
+        exchanges: initialExchanges,
+        history: [
+          {
+            timestamp: nowStr,
+            action: 'Conferência Física Iniciada',
+            user: currentUser.name,
+            details: `KM Chegada: ${arrivalKm}${unifiedMaps && unifiedMaps.length > 0 ? ` (Unificados: ${unifiedMaps.join(', ')})` : ''}`
+          }
+        ]
+      };
+      sessionToActivate = newSession;
+      onSaveAudits([newSession, ...audits]);
+
+      if (onSaveImportedRoutes) {
+        const updatedRoutes = importedRoutes.map(r => {
+          const isMatched = r.routeMap.toUpperCase() === finalRouteMap ||
+            (unifiedMaps && unifiedMaps.some(m => m.toUpperCase() === r.routeMap.toUpperCase()));
+          if (isMatched) {
+            return { ...r, status: 'conferindo' as const };
+          }
+          return r;
+        });
+        onSaveImportedRoutes(updatedRoutes);
+      }
     }
 
-    setLoadedSessionTime(newSession.updatedAt || nowStr);
-    setActiveSession(newSession);
+    setLoadedSessionTime(sessionToActivate.updatedAt || nowStr);
+    handleOpenSession(sessionToActivate);
     
     // Clear form
     setRouteMap('');
@@ -1254,6 +1323,7 @@ export default function ConferenteView({
         ...updatedSession,
         items: getMergedFinalItems(updatedSession),
         status: nextStatus,
+        reopeningRequested: false,
         endTime: now,
         lastTimerStart: undefined,
         totalCountingDurationMs: finalDurationMs,
@@ -1371,6 +1441,7 @@ export default function ConferenteView({
       ...activeSession,
       items: getMergedFinalItems(activeSession),
       status: nextStatus,
+      reopeningRequested: false,
       endTime: now,
       lastTimerStart: undefined,
       totalCountingDurationMs: finalDurationMs,
@@ -1825,15 +1896,102 @@ export default function ConferenteView({
     return audits.some(a => 
       (a.routeMap.toUpperCase() === routeMap.toUpperCase() || 
        (a.unifiedMaps && a.unifiedMaps.some(m => m.toUpperCase() === routeMap.toUpperCase()))) &&
-      (a.status === 'finalizado_ok' || a.status === 'finalizado_divergente')
+      (a.status === 'finalizado_ok' || a.status === 'finalizado_divergente') &&
+      !a.reopeningRequested
     );
   };
+
+  // List of all open/pending routes including those requested for reopening
+  const openRoutesList = useMemo(() => {
+    const list: Array<{
+      id: string;
+      routeMap: string;
+      plate: string;
+      driverName?: string;
+      status: string;
+      isBlitz?: boolean;
+      reopeningRequested?: boolean;
+      audit?: AuditSession;
+    }> = [];
+
+    const processedMaps = new Set<string>();
+
+    // 1. Process imported routes
+    (importedRoutes || []).forEach(route => {
+      const routeMapUpper = route.routeMap.toUpperCase();
+      const matchingAudit = audits.find(a => 
+        a.routeMap.toUpperCase() === routeMapUpper ||
+        (a.unifiedMaps && a.unifiedMaps.some(m => m.toUpperCase() === routeMapUpper))
+      );
+
+      const isReopeningReq = matchingAudit?.reopeningRequested === true;
+      const isAuditActive = matchingAudit && (matchingAudit.status === 'em_aberto' || matchingAudit.status === 'reconferencia');
+      const isClosed = isRouteClosedInAudits(route.routeMap) && !isReopeningReq;
+
+      if (!isClosed || isReopeningReq || isAuditActive) {
+        processedMaps.add(routeMapUpper);
+        
+        let effectiveStatus: string = route.status || 'pendente';
+        if (isReopeningReq) {
+          effectiveStatus = 'solicitado_reabertura';
+        } else if (matchingAudit?.status === 'reconferencia') {
+          effectiveStatus = 'reconferir';
+        } else if (matchingAudit?.status === 'em_aberto') {
+          effectiveStatus = 'conferindo';
+        }
+
+        list.push({
+          id: route.id,
+          routeMap: route.routeMap,
+          plate: route.plate,
+          driverName: (route as any).driverName,
+          status: effectiveStatus,
+          isBlitz: !!route.isBlitz,
+          reopeningRequested: isReopeningReq,
+          audit: matchingAudit
+        });
+      }
+    });
+
+    // 2. Add any audit that has reopeningRequested === true or is active, but wasn't added yet
+    (audits || []).forEach(audit => {
+      const auditMapUpper = audit.routeMap.toUpperCase();
+      const isReopeningReq = audit.reopeningRequested === true;
+      const isAuditActive = audit.status === 'em_aberto' || audit.status === 'reconferencia';
+
+      if ((isReopeningReq || isAuditActive) && !processedMaps.has(auditMapUpper)) {
+        processedMaps.add(auditMapUpper);
+
+        let effectiveStatus: string = audit.status;
+        if (isReopeningReq) {
+          effectiveStatus = 'solicitado_reabertura';
+        } else if (audit.status === 'reconferencia') {
+          effectiveStatus = 'reconferir';
+        } else if (audit.status === 'em_aberto') {
+          effectiveStatus = 'conferindo';
+        }
+
+        list.push({
+          id: 'audit_open_' + audit.id,
+          routeMap: audit.routeMap,
+          plate: audit.plate,
+          driverName: getDriverName(audit.driverId),
+          status: effectiveStatus,
+          isBlitz: false,
+          reopeningRequested: isReopeningReq,
+          audit: audit
+        });
+      }
+    });
+
+    return list;
+  }, [importedRoutes, audits]);
 
   // Helper stats for today
   const mapsToday = importedRoutes.length;
   const mapsCompletedOk = audits.filter(a => a.status === 'finalizado_ok').length;
   const mapsCompletedDivergent = audits.filter(a => a.status === 'finalizado_divergente').length;
-  const mapsInCount = importedRoutes.filter(r => r.status !== 'fechado' && !isRouteClosedInAudits(r.routeMap)).length;
+  const mapsInCount = openRoutesList.length;
   const mapsInRecon = audits.filter(a => a.status === 'reconferencia').length;
   const mapsCompletedCount = mapsCompletedOk + mapsCompletedDivergent;
 
@@ -1946,7 +2104,7 @@ export default function ConferenteView({
   const getHelperName = (id?: string) => id ? drivers.find(d => d.id === id)?.name || id : 'Sem ajudante';
 
   const pendingOrActiveAudits = audits.filter(a => 
-    a.status === 'em_aberto' || a.status === 'reconferencia'
+    a.status === 'em_aberto' || a.status === 'reconferencia' || a.reopeningRequested === true
   );
 
   return (
@@ -2121,7 +2279,12 @@ export default function ConferenteView({
                             <span className="font-mono text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                               Placa: {audit.plate}
                             </span>
-                            {isReconferindo ? (
+                            {audit.reopeningRequested ? (
+                              <span className="bg-amber-600 text-white text-xxs font-bold uppercase tracking-wider px-2 py-0.5 rounded border border-amber-500 animate-pulse flex items-center space-x-1">
+                                <RefreshCw className="h-3 w-3 animate-spin" />
+                                <span>REABERTURA SOLICITADA</span>
+                              </span>
+                            ) : isReconferindo ? (
                               <span className="bg-red-600 text-white text-xxs font-bold uppercase tracking-wider px-2 py-0.5 rounded border border-red-500 animate-pulse flex items-center space-x-1">
                                 <AlertTriangle className="h-3 w-3" />
                                 <span>RECONFERÊNCIA COMPULSÓRIA</span>
@@ -2148,6 +2311,13 @@ export default function ConferenteView({
                             </div>
                           </div>
 
+                          {audit.reopeningRequested && audit.reopeningJustification && (
+                            <div className="mt-2 bg-amber-50 border-l-4 border-amber-500 p-3 text-xs text-amber-900 rounded-lg">
+                              <strong>Motivo da Reabertura:</strong> "{audit.reopeningJustification}"
+                              {audit.reopeningRequestUser && <span className="block mt-0.5 text-[10px] text-amber-700">Solicitado por: {audit.reopeningRequestUser}</span>}
+                            </div>
+                          )}
+
                           {isReconferindo && audit.reconciliationNotes && (
                             <div className="mt-2 bg-red-50 border-l-4 border-red-500 p-3 text-xs text-red-900 rounded-lg">
                               <strong>Divergência Fiscal apontada:</strong> "{audit.reconciliationNotes}"
@@ -2156,17 +2326,31 @@ export default function ConferenteView({
                           )}
                         </div>
 
-                        <div className="mt-4 md:mt-0 flex items-center space-x-2">
+                        <div className="mt-3 md:mt-0 flex flex-wrap items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleRouteMap(audit.routeMap)}
+                            className={`px-3 py-2 rounded-lg font-bold text-xs border transition-all cursor-pointer ${
+                              selectedRouteMaps.includes(audit.routeMap.toUpperCase())
+                                ? 'bg-amber-600 text-white border-amber-700 shadow-xs'
+                                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                            }`}
+                            title="Marcar para unificar com outro mapa"
+                          >
+                            {selectedRouteMaps.includes(audit.routeMap.toUpperCase()) ? '✓ Selecionado' : '+ Unificar'}
+                          </button>
                           <button
                             onClick={() => handleOpenSession(audit)}
-                            className={`w-full md:w-auto flex items-center justify-center space-x-2 px-4 py-2.5 rounded-lg font-bold text-sm transition-all shadow-sm ${
-                              isReconferindo
+                            className={`flex-grow md:flex-grow-0 flex items-center justify-center space-x-2 px-4 py-2 rounded-lg font-bold text-xs md:text-sm transition-all shadow-sm ${
+                              audit.reopeningRequested
+                                ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                                : isReconferindo
                                 ? 'bg-red-600 hover:bg-red-700 text-white'
                                 : 'bg-[#0f35a9] hover:bg-blue-800 text-white'
                             }`}
                           >
-                            <span>{isReconferindo ? 'Sanar Divergência' : 'Lançar'}</span>
-                            <ArrowRight className="h-4 w-4" />
+                            <span>{audit.reopeningRequested ? 'Re-conferir Mapa Reaberto' : isReconferindo ? 'Sanar Divergência' : 'Lançar'}</span>
+                            <ArrowRight className="h-4 w-4 shrink-0" />
                           </button>
                         </div>
                       </div>
@@ -2321,8 +2505,8 @@ export default function ConferenteView({
                 </button>
               </div>
 
-              {/* Mapas Importados Pendentes Quick Fill Panel */}
-              {importedRoutes && importedRoutes.filter(r => r.status !== 'fechado' && !isRouteClosedInAudits(r.routeMap)).length > 0 && (
+              {/* Mapas Importados e Reabertos Quick Fill Panel */}
+              {openRoutesList.length > 0 && (
                 <div className="mb-5 bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
                   <div className="flex justify-between items-center">
                     <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider flex items-center space-x-1.5 font-mono">
@@ -2330,7 +2514,7 @@ export default function ConferenteView({
                       <span>Veículos com Mapas em Aberto</span>
                     </span>
                     <span className="text-[10px] text-slate-500 font-semibold font-mono">
-                      {importedRoutes.filter(r => r.status !== 'fechado' && !isRouteClosedInAudits(r.routeMap)).length} abertos
+                      {openRoutesList.length} abertos
                     </span>
                   </div>
 
@@ -2343,16 +2527,16 @@ export default function ConferenteView({
                       <button
                         type="button"
                         onClick={() => {
-                          const firstRoute = importedRoutes.find(r => r.routeMap.toUpperCase() === selectedRoutesForUnify[0].toUpperCase());
+                          const firstRoute = openRoutesList.find(r => r.routeMap.toUpperCase() === selectedRoutesForUnify[0].toUpperCase());
                           setRouteMap(selectedRoutesForUnify.join(' + '));
                           const plates = selectedRoutesForUnify.map(m => {
-                            const r = importedRoutes.find(x => x.routeMap.toUpperCase() === m.toUpperCase());
+                            const r = openRoutesList.find(x => x.routeMap.toUpperCase() === m.toUpperCase());
                             return r ? r.plate : '';
                           }).filter(p => p !== '');
                           const uniquePlates = Array.from(new Set(plates));
                           setPlate(uniquePlates.join(' / '));
                           if (firstRoute) {
-                            autoSelectDriverForRoute(firstRoute);
+                            autoSelectDriverForRoute({ driverName: firstRoute.driverName } as any);
                           }
                         }}
                         className="bg-slate-900 hover:bg-slate-800 text-amber-400 font-bold px-3 py-1.5 rounded transition shadow-xs text-[10px] uppercase cursor-pointer self-end sm:self-auto"
@@ -2362,17 +2546,22 @@ export default function ConferenteView({
                     </div>
                   )}
                   <div className="flex flex-col gap-2">
-                    {importedRoutes.filter(r => r.status !== 'fechado' && !isRouteClosedInAudits(r.routeMap)).map(route => {
+                    {openRoutesList.map(route => {
                       const isPendente = route.status === 'pendente' || !route.status;
                       const isConferindo = route.status === 'conferindo';
                       const isEmAnalise = route.status === 'em_analise';
                       const isReconferir = route.status === 'reconferir';
+                      const isReabertura = route.status === 'solicitado_reabertura' || route.reopeningRequested;
 
                       let btnStyle = "bg-red-50 text-red-950 border-red-200";
                       let badgeStyle = "bg-red-100 text-red-800 border border-red-200";
                       let statusText = "Pendente";
 
-                      if (isConferindo) {
+                      if (isReabertura) {
+                        btnStyle = "bg-amber-50/80 text-amber-950 border-amber-300 font-extrabold";
+                        badgeStyle = "bg-amber-600 text-white border border-amber-700 font-extrabold animate-pulse";
+                        statusText = "🔄 Reabertura Solicitada";
+                      } else if (isConferindo) {
                         btnStyle = "bg-amber-50 text-amber-950 border-amber-200";
                         badgeStyle = "bg-amber-100 text-amber-800 border border-amber-200";
                         statusText = "Conferindo";
@@ -2386,14 +2575,24 @@ export default function ConferenteView({
                         statusText = "Reconferir";
                       }
 
+                      const isSelected = selectedRouteMaps.includes(route.routeMap.toUpperCase());
+
                       return (
                         <div
                           key={route.id}
-                          className={`w-full text-left border text-xs p-3 rounded-xl space-y-2 font-medium shadow-3xs transition-all duration-150 ${btnStyle}`}
+                          className={`w-full text-left border text-xs p-3 rounded-xl space-y-2 font-medium shadow-3xs transition-all duration-150 ${btnStyle} ${isSelected ? 'ring-2 ring-amber-500 border-amber-500 bg-amber-50' : ''}`}
                         >
                           <div 
-                            className="flex justify-between items-center cursor-pointer hover:opacity-85"
+                            className="flex flex-wrap items-center justify-between gap-2 cursor-pointer hover:opacity-85"
                             onClick={() => {
+                              if (selectedRouteMaps.length > 0) {
+                                handleToggleRouteMap(route.routeMap);
+                                return;
+                              }
+                              if (route.audit) {
+                                handleOpenSession(route.audit);
+                                return;
+                              }
                               if (isConferindo || isReconferir) {
                                 const matchingAudit = audits.find(a => 
                                   a.routeMap.toUpperCase() === route.routeMap.toUpperCase() || 
@@ -2406,31 +2605,47 @@ export default function ConferenteView({
                               }
                               handleToggleRouteMap(route.routeMap);
                             }}
-                            title={isConferindo || isReconferir ? "Clique para continuar esta conferência" : "Clique para selecionar este mapa"}
+                            title={selectedRouteMaps.length > 0 ? "Clique para selecionar/desmarcar este mapa" : route.audit ? "Clique para abrir e conferir este mapa" : "Clique para selecionar este mapa"}
                           >
-                            <div className="flex items-center space-x-2">
-                              {isPendente && (
+                            <div className="flex items-center space-x-2 flex-wrap min-w-0">
+                              {(isPendente || isReabertura || isReconferir || isConferindo) && (
                                 <input
                                   type="checkbox"
-                                  checked={selectedRouteMaps.includes(route.routeMap)}
+                                  checked={isSelected}
                                   onChange={(e) => {
                                     e.stopPropagation();
                                     handleToggleRouteMap(route.routeMap);
                                   }}
-                                  className="h-4 w-4 rounded text-amber-500 border-slate-300 focus:ring-amber-500 cursor-pointer mr-1"
+                                  className="h-4 w-4 rounded text-amber-500 border-slate-300 focus:ring-amber-500 cursor-pointer mr-1 shrink-0"
+                                  title="Marcar para unificar com outro mapa"
                                 />
                               )}
-                              <span className="font-extrabold text-sm">{route.routeMap}</span>
-                              <span className="text-[10px] opacity-75 font-mono">({route.plate})</span>
+                              <span className="font-extrabold text-sm truncate">{route.routeMap}</span>
+                              <span className="text-[10px] opacity-75 font-mono truncate">({route.plate})</span>
                               {route.isBlitz && (
-                                <span className="bg-red-600 text-white text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse flex items-center gap-0.5">
+                                <span className="bg-red-600 text-white text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse flex items-center gap-0.5 shrink-0">
                                   ⚡ Blitz de Refugo
                                 </span>
                               )}
                             </div>
-                            <span className={`text-[8px] font-extrabold uppercase px-2 py-0.5 rounded-full ${badgeStyle}`}>
-                              {statusText}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                              <span className={`text-[8px] font-extrabold uppercase px-2 py-0.5 rounded-full whitespace-nowrap ${badgeStyle}`}>
+                                {statusText}
+                              </span>
+                              {(isReconferir || isConferindo || route.audit) && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleRouteMap(route.routeMap);
+                                  }}
+                                  className={`text-[9px] font-bold px-2 py-0.5 rounded border transition-colors cursor-pointer whitespace-nowrap ${isSelected ? 'bg-amber-600 text-white border-amber-700' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'}`}
+                                  title="Unificar este mapa"
+                                >
+                                  {isSelected ? '✓ Selecionado' : '+ Unificar'}
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
